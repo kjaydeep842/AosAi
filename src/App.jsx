@@ -5,7 +5,7 @@ import {
   Check, AlertCircle, Folder, FileCode, Settings2, Share2, 
   FileText, ChevronRight, Download, User, ListTodo, HelpCircle, 
   Activity, Compass, Shield, Zap, Search, AlertTriangle, 
-  BookOpen, Code2, Globe, MessageSquare, Maximize2, Minimize2, Key, TerminalSquare, X
+  BookOpen, Code2, Globe, MessageSquare, Maximize2, Minimize2, Key, TerminalSquare, X, Menu
 } from 'lucide-react';
 
 // ==========================================
@@ -763,6 +763,11 @@ resetBtn.addEventListener('click', () => {
 export default function App() {
   // Navigation State
   const [activeTab, setActiveTab] = useState('workspace'); // workspace, sandbox, analyst, swarm, marketplace
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    setIsSidebarOpen(false);
+  }, [activeTab]);
   
   // API Integration Configuration state - checks environment variables first
   const [apiProvider, setApiProvider] = useState(() => {
@@ -1356,19 +1361,27 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
   };
 
   return (
-    <div style={{ display: 'flex', width: '100vw', height: '100vh', background: 'var(--bg-main)', overflow: 'hidden' }}>
+    <div className="app-container">
+      {/* Mobile Top Header */}
+      <header className="mobile-header">
+        <button className="mobile-menu-btn" onClick={() => setIsSidebarOpen(prev => !prev)} aria-label="Toggle Navigation">
+          <Menu size={20} />
+        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Layers size={18} color="var(--primary)" />
+          <h2 style={{ margin: 0, fontSize: '16px', fontWeight: '800' }} className="text-gradient">AosAI</h2>
+        </div>
+        <div style={{ width: '20px' }} />
+      </header>
+
+      {isSidebarOpen && (
+        <div className="sidebar-overlay" onClick={() => setIsSidebarOpen(false)} />
+      )}
       
       {/* ==========================================
           LEFT SIDEBAR (Global Controls)
           ========================================== */}
-      <aside style={{
-        width: '260px',
-        background: 'var(--bg-sidebar)',
-        borderRight: '1px solid var(--border-color)',
-        display: 'flex',
-        flexDirection: 'column',
-        flexShrink: 0
-      }}>
+      <aside className={`app-sidebar ${isSidebarOpen ? 'open' : ''}`}>
         
         {/* Branding Logo */}
         <div style={{ padding: '24px 20px', borderBottom: '1px solid var(--border-color)' }}>
@@ -1448,23 +1461,14 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
         </div>
       </aside>
 
-      {/* ==========================================
-          MAIN AREA (Flexible Panels)
-          ========================================== */}
-      <main style={{
-        flexGrow: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        overflow: 'hidden'
-      }}>
+      <main className="main-viewport">
         
         {/* Content Tabs Render */}
         <div style={{ flexGrow: 1, overflow: 'hidden' }}>
           
           {/* TAB 1: WORKSPACE / AGENT CHAT */}
           {activeTab === 'workspace' && (
-            <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }} className="animate-fade">
+            <div className="workspace-layout animate-fade">
               
               {/* Agent interaction chat panel */}
               <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', height: '100%', borderRight: '1px solid var(--border-color)' }}>
@@ -1546,7 +1550,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
               </div>
 
               {/* Sidebar Agent Selector */}
-              <div style={{ width: '280px', background: 'rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+              <div className="agents-sidebar-panel">
                 <div style={{ 
                   padding: '16px 20px', 
                   borderBottom: '1px solid var(--border-color)', 
@@ -1609,8 +1613,8 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
 
           {/* TAB 2: CODE SANDBOX */}
           {activeTab === 'sandbox' && (
-            <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }} className="animate-fade">
-              <div style={{ width: '220px', borderRight: '1px solid var(--border-color)', background: 'rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column' }}>
+            <div className="sandbox-layout animate-fade">
+              <div className="sandbox-files-panel">
                 <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 'bold' }}>
                   <Folder size={14} color="var(--primary)" />
                   <span>WORKSPACE FILES</span>
@@ -1669,7 +1673,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
                 </div>
               </div>
 
-              <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', height: '100%', background: '#05070c' }}>
+              <div className="sandbox-editor-panel">
                 <div style={{ padding: '12px 20px', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#0a0d14' }}>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--secondary)' }}>
                     {sandboxView === 'editor' ? `Editing: src/${activeFile.name}` : 'Sandbox Live Output'}
@@ -1807,8 +1811,8 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
 
           {/* TAB 3: DATA ANALYST */}
           {activeTab === 'analyst' && (
-            <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }} className="animate-fade">
-              <div style={{ width: '280px', borderRight: '1px solid var(--border-color)', background: 'rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', padding: '20px' }}>
+            <div className="analyst-layout animate-fade">
+              <div className="analyst-sidebar">
                 <h3 style={{ margin: '0 0 12px', fontSize: '15px' }} className="text-gradient">Data Analyst Module</h3>
                 <div style={{ marginBottom: '20px' }}>
                   <label style={{ fontSize: '11px', color: 'var(--text-dark)', display: 'block', marginBottom: '6px' }}>SELECT ACTIVE DATASET</label>
@@ -1831,7 +1835,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
                 </div>
               </div>
 
-              <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', height: '100%', padding: '24px', overflowY: 'auto' }}>
+              <div className="analyst-main">
                 <div className="glow-card" style={{ padding: '20px', marginBottom: '24px' }}>
                   <h4 style={{ margin: '0 0 12px', fontSize: '14px' }}>Dataset Matrix: {SAMPLE_DATASETS[analystDataset].title}</h4>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
@@ -1870,7 +1874,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
                   </button>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '24px' }}>
+                <div className="analyst-grid">
                   <div className="glow-card" style={{ padding: '24px', minHeight: '320px', display: 'flex', flexDirection: 'column' }}>
                     <h4 style={{ margin: '0 0 20px', fontSize: '14px' }}>SVG Visual Output</h4>
                     <div style={{ flexGrow: 1, display: 'flex', alignItems: 'flex-end', height: '220px' }}>
@@ -1914,8 +1918,8 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
 
           {/* TAB 4: SWARM */}
           {activeTab === 'swarm' && (
-            <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }} className="animate-fade">
-              <div style={{ width: '300px', borderRight: '1px solid var(--border-color)', background: 'rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', padding: '20px' }}>
+            <div className="swarm-layout animate-fade">
+              <div className="swarm-sidebar">
                 <h3 style={{ margin: '0 0 8px', fontSize: '15px' }} className="text-gradient">Multi-Agent Swarm</h3>
                 <textarea 
                   value={swarmPrompt}
@@ -1930,16 +1934,16 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
 
               <div style={{ flexGrow: 1, padding: '24px', overflowY: 'auto' }}>
                 <div className="glow-card" style={{ padding: '24px', marginBottom: '24px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={nodeCardStyle(swarmStep === 1, swarmStep > 1)}>👑 Orchestrator</div>
-                    <ChevronRight />
-                    <div style={nodeCardStyle(swarmStep === 2, swarmStep > 2)}>📐 Architect</div>
-                    <ChevronRight />
-                    <div style={nodeCardStyle(swarmStep === 3, swarmStep > 3)}>💻 Developer</div>
-                    <ChevronRight />
-                    <div style={nodeCardStyle(swarmStep === 4, swarmStep > 4)}>🧪 QA Expert</div>
-                    <ChevronRight />
-                    <div style={nodeCardStyle(swarmStep === 5, swarmStep > 5)}>🚀 DevOps</div>
+                  <div className="swarm-flow">
+                    <div style={nodeCardStyle(swarmStep === 1, swarmStep > 1)} className="swarm-node">👑 Orchestrator</div>
+                    <ChevronRight className="swarm-arrow" />
+                    <div style={nodeCardStyle(swarmStep === 2, swarmStep > 2)} className="swarm-node">📐 Architect</div>
+                    <ChevronRight className="swarm-arrow" />
+                    <div style={nodeCardStyle(swarmStep === 3, swarmStep > 3)} className="swarm-node">💻 Developer</div>
+                    <ChevronRight className="swarm-arrow" />
+                    <div style={nodeCardStyle(swarmStep === 4, swarmStep > 4)} className="swarm-node">🧪 QA Expert</div>
+                    <ChevronRight className="swarm-arrow" />
+                    <div style={nodeCardStyle(swarmStep === 5, swarmStep > 5)} className="swarm-node">🚀 DevOps</div>
                   </div>
                 </div>
 

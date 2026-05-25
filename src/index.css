@@ -264,3 +264,298 @@ pre.code-block {
   font-size: 13px;
   border-radius: 0 8px 8px 0;
 }
+
+/* ==========================================
+   Responsive Grid & Layout System
+   ========================================== */
+
+.app-container {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg-main);
+  overflow: hidden;
+  position: relative;
+}
+
+.mobile-header {
+  display: none;
+}
+
+.app-sidebar {
+  width: 260px;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), left 0.3s ease;
+}
+
+.main-viewport {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.workspace-layout {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+  width: 100%;
+}
+
+.agents-sidebar-panel {
+  width: 280px;
+  background: rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border-color);
+}
+
+.sandbox-layout {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+  width: 100%;
+}
+
+.sandbox-files-panel {
+  width: 220px;
+  border-right: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+}
+
+.sandbox-editor-panel {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #05070c;
+  overflow: hidden;
+}
+
+.analyst-layout {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+  width: 100%;
+}
+
+.analyst-sidebar {
+  width: 280px;
+  border-right: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+}
+
+.analyst-main {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.analyst-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 24px;
+}
+
+.swarm-layout {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+  width: 100%;
+}
+
+.swarm-sidebar {
+  width: 300px;
+  border-right: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+}
+
+.swarm-flow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.swarm-node {
+  flex: 1;
+  text-align: center;
+}
+
+.swarm-arrow {
+  flex-shrink: 0;
+  color: var(--text-dark);
+}
+
+/* ==========================================
+   Mobile Responsive Media Queries (<= 768px)
+   ========================================== */
+
+@media (max-width: 768px) {
+  .app-container {
+    flex-direction: column;
+  }
+
+  .mobile-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    height: 56px;
+    background: var(--bg-sidebar);
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+    z-index: 25;
+  }
+
+  .mobile-menu-btn {
+    background: none;
+    border: none;
+    color: var(--text-main);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    border-radius: 4px;
+    transition: background 0.2s;
+  }
+
+  .mobile-menu-btn:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 21;
+  }
+
+  .app-sidebar {
+    position: fixed;
+    top: 56px;
+    left: -260px;
+    bottom: 0;
+    width: 260px;
+    z-index: 22;
+    box-shadow: 10px 0 30px rgba(0, 0, 0, 0.5);
+    border-right: 1px solid var(--border-color);
+  }
+
+  .app-sidebar.open {
+    transform: translateX(260px);
+  }
+
+  .main-viewport {
+    height: calc(100vh - 56px);
+  }
+
+  /* Workspace Panel Mobile */
+  .workspace-layout {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .agents-sidebar-panel {
+    width: 100%;
+    border-top: 1px solid var(--border-color);
+    border-left: none;
+    flex-shrink: 0;
+    max-height: 280px;
+  }
+
+  .message-bubble {
+    max-width: 90%;
+  }
+
+  /* Coding Sandbox Mobile */
+  .sandbox-layout {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .sandbox-files-panel {
+    width: 100%;
+    height: auto;
+    max-height: 180px;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .sandbox-editor-panel {
+    width: 100%;
+    min-height: 320px;
+    flex-grow: 1;
+  }
+
+  /* Data Analyst Mobile */
+  .analyst-layout {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .analyst-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+    padding: 16px;
+  }
+
+  .analyst-main {
+    padding: 16px;
+    height: auto;
+    overflow: visible;
+  }
+
+  .analyst-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  /* Swarm Dashboard Mobile */
+  .swarm-layout {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .swarm-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+    padding: 16px;
+  }
+
+  .swarm-flow {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .swarm-arrow {
+    transform: rotate(90deg);
+    align-self: center;
+    margin: 4px 0;
+  }
+}
