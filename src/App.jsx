@@ -760,6 +760,82 @@ resetBtn.addEventListener('click', () => {
   ]
 };
 
+// --- Client-side Database Emulation for Vercel / Static deployments ---
+const getLocalDb = () => {
+  const defaultData = { users: [], chats: [], sandboxHistory: [] };
+  try {
+    const raw = localStorage.getItem('aos_local_db');
+    return raw ? JSON.parse(raw) : defaultData;
+  } catch (e) {
+    return defaultData;
+  }
+};
+
+const saveLocalDb = (data) => {
+  try {
+    localStorage.setItem('aos_local_db', JSON.stringify(data));
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+const localDbAPI = {
+  login: (username, password) => {
+    const dbData = getLocalDb();
+    const cleanUsername = username.trim();
+    const user = dbData.users.find(u => u.username.toLowerCase() === cleanUsername.toLowerCase());
+    const now = new Date().toLocaleString();
+
+    if (user) {
+      if (user.password !== password) {
+        return { success: false, error: 'Invalid password for this username' };
+      }
+      user.loginCount = (user.loginCount || 0) + 1;
+      user.lastLogin = now;
+      saveLocalDb(dbData);
+      return { success: true, username: cleanUsername, loginCount: user.loginCount, lastLogin: now };
+    } else {
+      const newUser = { username: cleanUsername, password, loginCount: 1, lastLogin: now };
+      dbData.users.push(newUser);
+      saveLocalDb(dbData);
+      return { success: true, username: cleanUsername, loginCount: 1, lastLogin: now, isNewUser: true };
+    }
+  },
+
+  getUsers: () => {
+    const dbData = getLocalDb();
+    return dbData.users
+      .map(u => ({ username: u.username, login_count: u.loginCount, last_login: u.lastLogin }))
+      .sort((a, b) => new Date(b.last_login) - new Date(a.last_login));
+  },
+
+  getChats: (username, agentId) => {
+    const dbData = getLocalDb();
+    return dbData.chats.filter(
+      c => c.username.toLowerCase() === username.toLowerCase() && c.agentId.toLowerCase() === agentId.toLowerCase()
+    );
+  },
+
+  saveChat: (username, agentId, sender, text, timestamp, monologue) => {
+    const dbData = getLocalDb();
+    dbData.chats.push({ username, agentId, sender, text, timestamp, monologue });
+    saveLocalDb(dbData);
+  },
+
+  getSandboxHistory: (username) => {
+    const dbData = getLocalDb();
+    return dbData.sandboxHistory
+      .filter(s => s.username.toLowerCase() === username.toLowerCase())
+      .reverse();
+  },
+
+  saveSandboxPrompt: (username, prompt, timestamp) => {
+    const dbData = getLocalDb();
+    dbData.sandboxHistory.push({ username, prompt, timestamp });
+    saveLocalDb(dbData);
+  }
+};
+
 export default function App() {
   // Navigation State
   const [activeTab, setActiveTab] = useState('workspace'); // workspace, sandbox, analyst, swarm, marketplace
@@ -881,50 +957,101 @@ export default function App() {
 
   // Fetch all users list for database stats
   const fetchUserDirectory = async () => {
+    if (window.useLocalDbFallback) {
+      setUserDirectory(localDbAPI.getUsers());
+      return;
+    }
     try {
       const res = await fetch('/api/users');
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setUserDirectory(data);
+      if (!res.ok) throw new Error('API server returned error status');
+      const contentType = res.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setUserDirectory(data);
+        }
+      } else {
+        window.useLocalDbFallback = true;
+        setUserDirectory(localDbAPI.getUsers());
       }
     } catch (e) {
-      console.error('Failed to fetch user directory', e);
+      console.warn('API error, falling back to client-side localStorage db', e);
+      window.useLocalDbFallback = true;
+      setUserDirectory(localDbAPI.getUsers());
     }
   };
 
   // Fetch sandbox prompt logs from database
   const fetchSandboxHistory = async (user) => {
     if (!user) return;
+    if (window.useLocalDbFallback) {
+      setSandboxHistory(localDbAPI.getSandboxHistory(user));
+      return;
+    }
     try {
       const res = await fetch(`/api/sandbox/${user}`);
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setSandboxHistory(data);
+      if (!res.ok) throw new Error('API server returned error status');
+      const contentType = res.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setSandboxHistory(data);
+        }
+      } else {
+        window.useLocalDbFallback = true;
+        setSandboxHistory(localDbAPI.getSandboxHistory(user));
       }
     } catch (e) {
-      console.error('Failed to fetch sandbox history', e);
+      window.useLocalDbFallback = true;
+      setSandboxHistory(localDbAPI.getSandboxHistory(user));
     }
   };
 
   // Fetch chat records for active agent
   const fetchChats = async (user, agentId) => {
     if (!user || !agentId) return;
+    if (window.useLocalDbFallback) {
+      const data = localDbAPI.getChats(user, agentId);
+      setChats(prev => ({
+        ...prev,
+        [agentId]: data.length > 0 ? data : getFallbackChats(agentId)
+      }));
+      return;
+    }
     try {
       const res = await fetch(`/api/chats/${user}/${agentId}`);
-      const data = await res.json();
-      if (Array.isArray(data)) {
+      if (!res.ok) throw new Error('API server returned error status');
+      const contentType = res.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setChats(prev => ({
+            ...prev,
+            [agentId]: data.length > 0 ? data : getFallbackChats(agentId)
+          }));
+        }
+      } else {
+        window.useLocalDbFallback = true;
+        const data = localDbAPI.getChats(user, agentId);
         setChats(prev => ({
           ...prev,
-          [agentId]: data.length > 0 ? data : [
-            agentId === 'devon-x' ? { sender: 'agent', text: 'Hello, I am Devon-X. If you have supplied an API Key in the Credentials panel (or inside a local .env file), I will make real LLM requests to generate and refine files in the sandbox. Otherwise, I will use high-fidelity template logic.', timestamp: '15:01', monologue: 'Connected. Waiting for prompt.' } :
-            agentId === 'alphacap' ? { sender: 'agent', text: 'AlphaCap Analyst online. Ingesting Q1 2026 indexes. I can run real analysis if configured, or use standard local matrix compilers.', timestamp: '15:02' } :
-            { sender: 'agent', text: 'SwarmCore is active. Input your swarm telemetry brief on the Swarm tab to trigger collaborative execution.', timestamp: '15:03' }
-          ]
+          [agentId]: data.length > 0 ? data : getFallbackChats(agentId)
         }));
       }
     } catch (e) {
-      console.error('Failed to fetch chats', e);
+      window.useLocalDbFallback = true;
+      const data = localDbAPI.getChats(user, agentId);
+      setChats(prev => ({
+        ...prev,
+        [agentId]: data.length > 0 ? data : getFallbackChats(agentId)
+      }));
     }
+  };
+
+  const getFallbackChats = (agentId) => {
+    return agentId === 'devon-x' ? [{ sender: 'agent', text: 'Hello, I am Devon-X. If you have supplied an API Key in the Credentials panel (or inside a local .env file), I will make real LLM requests to generate and refine files in the sandbox. Otherwise, I will use high-fidelity template logic.', timestamp: '15:01', monologue: 'Connected. Waiting for prompt.' }] :
+           agentId === 'alphacap' ? [{ sender: 'agent', text: 'AlphaCap Analyst online. Ingesting Q1 2026 indexes. I can run real analysis if configured, or use standard local matrix compilers.', timestamp: '15:02' }] :
+           [{ sender: 'agent', text: 'SwarmCore is active. Input your swarm telemetry brief on the Swarm tab to trigger collaborative execution.', timestamp: '15:03' }];
   };
 
   // Synchronization triggers
@@ -1188,17 +1315,24 @@ export default function App() {
     setCurrentInput('');
 
     // Save user chat message to database
-    fetch('/api/chats', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: currentUser,
-        agentId: agentKey,
-        sender: 'user',
-        text: promptText,
-        timestamp: time
-      })
-    }).catch(err => console.error(err));
+    if (window.useLocalDbFallback) {
+      localDbAPI.saveChat(currentUser, agentKey, 'user', promptText, time);
+    } else {
+      fetch('/api/chats', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: currentUser,
+          agentId: agentKey,
+          sender: 'user',
+          text: promptText,
+          timestamp: time
+        })
+      }).catch(err => {
+        console.warn('POST chats failed, saving locally', err);
+        localDbAPI.saveChat(currentUser, agentKey, 'user', promptText, time);
+      });
+    }
 
     const tempAgentMsg = {
       sender: 'agent',
@@ -1244,18 +1378,25 @@ export default function App() {
       });
 
       // Save agent reply to database
-      fetch('/api/chats', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: currentUser,
-          agentId: agentKey,
-          sender: 'agent',
-          text: replyText,
-          timestamp: agentTime,
-          monologue: monologue
-        })
-      }).catch(err => console.error(err));
+      if (window.useLocalDbFallback) {
+        localDbAPI.saveChat(currentUser, agentKey, 'agent', replyText, agentTime, monologue);
+      } else {
+        fetch('/api/chats', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: currentUser,
+            agentId: agentKey,
+            sender: 'agent',
+            text: replyText,
+            timestamp: agentTime,
+            monologue: monologue
+          })
+        }).catch(err => {
+          console.warn('POST chats failed, saving locally', err);
+          localDbAPI.saveChat(currentUser, agentKey, 'agent', replyText, agentTime, monologue);
+        });
+      }
 
     } catch (err) {
       const errorTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -1276,18 +1417,25 @@ export default function App() {
       });
 
       // Save agent error message to database
-      fetch('/api/chats', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: currentUser,
-          agentId: agentKey,
-          sender: 'agent',
-          text: `Error connecting to API provider: ${err.message}`,
-          timestamp: errorTime,
-          monologue: 'Connection Exception triggered.'
-        })
-      }).catch(err => console.error(err));
+      if (window.useLocalDbFallback) {
+        localDbAPI.saveChat(currentUser, agentKey, 'agent', `Error connecting to API provider: ${err.message}`, errorTime, 'Connection Exception triggered.');
+      } else {
+        fetch('/api/chats', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: currentUser,
+            agentId: agentKey,
+            sender: 'agent',
+            text: `Error connecting to API provider: ${err.message}`,
+            timestamp: errorTime,
+            monologue: 'Connection Exception triggered.'
+          })
+        }).catch(err => {
+          console.warn('POST chats failed, saving locally', err);
+          localDbAPI.saveChat(currentUser, agentKey, 'agent', `Error connecting to API provider: ${err.message}`, errorTime, 'Connection Exception triggered.');
+        });
+      }
     }
   };
 
@@ -1295,15 +1443,24 @@ export default function App() {
     if (!sandboxPrompt.trim()) return;
 
     // Save prompt generation log to database history
-    fetch('/api/sandbox', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: currentUser,
-        prompt: sandboxPrompt
-      })
-    }).then(() => fetchSandboxHistory(currentUser))
-      .catch(err => console.error(err));
+    if (window.useLocalDbFallback) {
+      localDbAPI.saveSandboxPrompt(currentUser, sandboxPrompt, new Date().toLocaleString());
+      fetchSandboxHistory(currentUser);
+    } else {
+      fetch('/api/sandbox', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: currentUser,
+          prompt: sandboxPrompt
+        })
+      }).then(() => fetchSandboxHistory(currentUser))
+        .catch(err => {
+          console.warn('POST sandbox prompt failed, saving locally', err);
+          localDbAPI.saveSandboxPrompt(currentUser, sandboxPrompt, new Date().toLocaleString());
+          fetchSandboxHistory(currentUser);
+        });
+    }
 
     setIsCodingInProgress(true);
     setCodingProgress(10);
@@ -1508,21 +1665,43 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
             const usernameInput = e.target.username.value;
             const passwordInput = e.target.password.value;
             if (!usernameInput || !passwordInput) return;
-            try {
-              const res = await fetch('/api/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: usernameInput, password: passwordInput })
-              });
-              const data = await res.json();
-              if (res.ok && data.success) {
-                localStorage.setItem('aos_logged_in_user', data.username);
-                setCurrentUser(data.username);
-              } else {
-                alert(data.error || 'Login failed');
+
+            // 1. Attempt backend server login first
+            if (!window.useLocalDbFallback) {
+              try {
+                const res = await fetch('/api/login', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ username: usernameInput, password: passwordInput })
+                });
+                const contentType = res.headers.get('content-type');
+                if (res.ok && contentType && contentType.includes('application/json')) {
+                  const data = await res.json();
+                  if (data.success) {
+                    localStorage.setItem('aos_logged_in_user', data.username);
+                    setCurrentUser(data.username);
+                    return;
+                  } else {
+                    alert(data.error || 'Login failed');
+                    return;
+                  }
+                } else {
+                  console.warn('API returned non-JSON response. Switching to local storage DB emulator.');
+                  window.useLocalDbFallback = true;
+                }
+              } catch (err) {
+                console.warn('Network error, switching to local storage DB emulator.', err);
+                window.useLocalDbFallback = true;
               }
-            } catch (err) {
-              alert('Error connecting to database server: ' + err.message);
+            }
+
+            // 2. Client-side local DB fallback
+            const res = localDbAPI.login(usernameInput, passwordInput);
+            if (res.success) {
+              localStorage.setItem('aos_logged_in_user', res.username);
+              setCurrentUser(res.username);
+            } else {
+              alert(res.error || 'Login failed');
             }
           }}
           className="glow-card" 
