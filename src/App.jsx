@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import * as XLSX from 'xlsx';
 import { 
   Bot, Code, Terminal, LineChart, Play, RefreshCw, Settings, 
   Database, Sparkles, Cpu, Layers, Send, Plus, Trash, Eye, 
@@ -833,6 +834,37 @@ const localDbAPI = {
     const dbData = getLocalDb();
     dbData.sandboxHistory.push({ username, prompt, timestamp });
     saveLocalDb(dbData);
+  },
+
+  // --- User Dataset methods ---
+  getUserDatasets: (username) => {
+    const dbData = getLocalDb();
+    if (!dbData.userDatasets) return [];
+    return dbData.userDatasets.filter(d => d.username.toLowerCase() === username.toLowerCase());
+  },
+
+  saveUserDataset: (username, dataset) => {
+    const dbData = getLocalDb();
+    if (!dbData.userDatasets) dbData.userDatasets = [];
+    // Replace if same name exists, otherwise push
+    const idx = dbData.userDatasets.findIndex(
+      d => d.username.toLowerCase() === username.toLowerCase() && d.name === dataset.name
+    );
+    if (idx !== -1) {
+      dbData.userDatasets[idx] = { username, ...dataset, updatedAt: new Date().toLocaleString() };
+    } else {
+      dbData.userDatasets.push({ username, ...dataset, createdAt: new Date().toLocaleString(), updatedAt: new Date().toLocaleString() });
+    }
+    saveLocalDb(dbData);
+  },
+
+  deleteUserDataset: (username, name) => {
+    const dbData = getLocalDb();
+    if (!dbData.userDatasets) return;
+    dbData.userDatasets = dbData.userDatasets.filter(
+      d => !(d.username.toLowerCase() === username.toLowerCase() && d.name === name)
+    );
+    saveLocalDb(dbData);
   }
 };
 
@@ -939,6 +971,17 @@ export default function App() {
     chartData: [18.4, 22.0, 26.8, 31.2, 38.5, 44.2, 52.0, 59.6, 68.1, 76.4]
   });
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  // DYNAMIC DATA ANALYTICS STATE
+  const [userDatasets, setUserDatasets] = useState([]); // list of user's saved datasets
+  const [activeDatasetName, setActiveDatasetName] = useState(null); // which dataset is selected
+  const [analystView, setAnalystView] = useState('list'); // 'list' | 'editor' | 'analysis'
+  const [datasetEditorMode, setDatasetEditorMode] = useState('manual'); // 'manual' | 'upload'
+  const [editorDataset, setEditorDataset] = useState({ name: '', headers: ['Column 1', 'Column 2', 'Column 3'], rows: [['', '', '']] });
+  const [analysisResult, setAnalysisResult] = useState(null);
+  const [aiAnalystPrompt, setAiAnalystPrompt] = useState('');
+  const [isUploadParsing, setIsUploadParsing] = useState(false);
+  const fileInputRef = useRef(null);
 
   // SWARM STATE
   const [swarmPrompt, setSwarmPrompt] = useState('Build a clean real-time status API routing telemetry');
@@ -1065,8 +1108,156 @@ export default function App() {
     if (currentUser) {
       fetchSandboxHistory(currentUser);
       fetchUserDirectory();
+      setUserDatasets(localDbAPI.getUserDatasets(currentUser));
     }
   }, [currentUser]);
+
+  // ── Dynamic Dataset Handlers ──────────────────────────────────────────
+  const handleFileUpload = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadParsing(true);
+
+    const reader = new FileReader();
+    const isPDF = file.name.toLowerCase().endsWith('.pdf');
+
+    if (isPDF) {
+      // PDF: read as text (works for text-based PDFs; proper PDF.js parse would need a worker)
+      reader.onload = (ev) => {
+        try {
+          const text = ev.target.result;
+          // Extract lines as rows, tab/comma-split into columns
+          const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+          const rows = lines.map(l => l.split(/\t|,/).map(c => c.trim()));
+          const maxCols = Math.max(...rows.map(r => r.length));
+          const headers = Array.from({ length: maxCols }, (_, i) => `Col ${i + 1}`);
+          setEditorDataset(prev => ({
+            ...prev,
+            name: file.name.replace(/\.[^/.]+$/, ''),
+            headers,
+            rows: rows.slice(0, 200)
+          }));
+          setDatasetEditorMode('manual');
+          setAnalystView('editor');
+        } catch (err) {
+          alert('Could not parse PDF as text. Try a CSV or Excel file.');
+        } finally {
+          setIsUploadParsing(false);
+        }
+      };
+      reader.readAsText(file);
+    } else {
+      // Excel / CSV
+      reader.onload = (ev) => {
+        try {
+          const data = new Uint8Array(ev.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          const jsonRows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+          const headers = (jsonRows[0] || []).map(String);
+          const rows = jsonRows.slice(1).map(r =>
+            Array.from({ length: headers.length }, (_, i) => String(r[i] ?? ''))
+          );
+          setEditorDataset({
+            name: file.name.replace(/\.[^/.]+$/, ''),
+            headers,
+            rows: rows.slice(0, 200)
+          });
+          setDatasetEditorMode('manual');
+          setAnalystView('editor');
+        } catch (err) {
+          alert('Failed to parse file: ' + err.message);
+        } finally {
+          setIsUploadParsing(false);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+    // Reset input so same file can be re-uploaded
+    e.target.value = '';
+  }, []);
+
+  const handleSaveDataset = () => {
+    if (!editorDataset.name.trim()) { alert('Please give this dataset a name.'); return; }
+    const ds = { ...editorDataset, name: editorDataset.name.trim() };
+    localDbAPI.saveUserDataset(currentUser, ds);
+    const updated = localDbAPI.getUserDatasets(currentUser);
+    setUserDatasets(updated);
+    setActiveDatasetName(ds.name);
+    setAnalystView('list');
+  };
+
+  const handleDeleteDataset = (name) => {
+    if (!window.confirm(`Delete dataset "${name}"?`)) return;
+    localDbAPI.deleteUserDataset(currentUser, name);
+    setUserDatasets(localDbAPI.getUserDatasets(currentUser));
+    if (activeDatasetName === name) setActiveDatasetName(null);
+    if (analystView === 'analysis') setAnalystView('list');
+  };
+
+  const handleAiAnalyzeDataset = async () => {
+    const ds = userDatasets.find(d => d.name === activeDatasetName);
+    if (!ds) return;
+    setIsAnalyzing(true);
+    setAnalystView('analysis');
+    try {
+      // Build a compact text table from the dataset
+      const tableText = [ds.headers.join(' | '), ...ds.rows.slice(0, 50).map(r => r.join(' | '))].join('\n');
+      const userQuery = aiAnalystPrompt.trim() || 'Analyze this dataset. Identify trends, outliers, and key insights.';
+
+      if (apiProvider === 'fallback') {
+        await new Promise(r => setTimeout(r, 1200));
+        setAnalysisResult({
+          summary: `Local template analysis of "${ds.name}": ${ds.rows.length} rows × ${ds.headers.length} columns. Configure a live API key in Credentials for real AI analysis.`,
+          insights: [
+            `Dataset has ${ds.rows.length} data entries.`,
+            `Columns: ${ds.headers.join(', ')}.`,
+            'Enable Gemini or OpenAI in Credentials tab for live AI-powered insights.'
+          ],
+          chartData: ds.rows.slice(0, 10).map((r) => {
+            const nums = r.map(v => parseFloat(v)).filter(v => !isNaN(v));
+            return nums.length > 0 ? nums[0] : 0;
+          })
+        });
+      } else {
+        const systemPrompt = `You are AlphaCap, an expert data analyst AI.
+The user uploaded a dataset named "${ds.name}" with columns: ${ds.headers.join(', ')}.
+Here is the data (max 50 rows shown):
+${tableText}
+
+User query: "${userQuery}"
+
+Respond ONLY with a valid JSON object in this exact schema:
+{
+  "summary": "Comprehensive paragraph summarizing the dataset and answering the user query",
+  "insights": ["Specific insight 1", "Specific insight 2", "Specific insight 3", "Specific insight 4"],
+  "chartData": [number1, number2, ...] (extract the most meaningful numeric column values, max 15 points)
+}`;
+        const raw = await callLLM(systemPrompt, userQuery, true);
+        const cleaned = raw.replace(/```json/g, '').replace(/```/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+        setAnalysisResult(parsed);
+      }
+    } catch (err) {
+      setAnalysisResult({
+        summary: `Analysis failed: ${err.message}`,
+        insights: ['Please check your API key in Credentials.'],
+        chartData: [0]
+      });
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleExportCSV = () => {
+    const ds = userDatasets.find(d => d.name === activeDatasetName);
+    if (!ds) return;
+    const csv = [ds.headers, ...ds.rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `${ds.name}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
 
   // Sync settings and custom agents to localStorage
   useEffect(() => {
@@ -2255,107 +2446,274 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
 
           {/* TAB 3: DATA ANALYST */}
           {activeTab === 'analyst' && (
-            <div className="analyst-layout animate-fade">
-              <div className="analyst-sidebar">
-                <h3 style={{ margin: '0 0 12px', fontSize: '15px' }} className="text-gradient">Data Analyst Module</h3>
-                <div style={{ marginBottom: '20px' }}>
-                  <label style={{ fontSize: '11px', color: 'var(--text-dark)', display: 'block', marginBottom: '6px' }}>SELECT ACTIVE DATASET</label>
-                  <select 
-                    value={analystDataset} 
-                    onChange={(e) => setAnalystDataset(e.target.value)}
-                    style={{ width: '100%', background: 'rgba(0,0,0,0.3)', color: 'white', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '10px', outline: 'none' }}
-                  >
-                    <option value="aiHardware">AI Chip Shipments & Rev</option>
-                    <option value="agentMarket">AI Agent deployments by sector</option>
-                  </select>
+            <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }} className="animate-fade">
+              {/* Hidden file input */}
+              <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv,.pdf" style={{ display: 'none' }} onChange={handleFileUpload} />
+
+              {/* ── LEFT SIDEBAR: Dataset Library ── */}
+              <div style={{ width: '260px', minWidth: '220px', borderRight: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', padding: '20px 16px', gap: '12px', overflowY: 'auto' }}>
+                <div>
+                  <h3 style={{ margin: '0 0 4px', fontSize: '15px' }} className="text-gradient">Data Analytics</h3>
+                  <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-dark)' }}>User: <span style={{ color: 'var(--secondary)' }}>{currentUser}</span></p>
                 </div>
 
-                <div style={{ marginBottom: '20px' }}>
-                  <label style={{ fontSize: '11px', color: 'var(--text-dark)', display: 'block', marginBottom: '6px' }}>CHART TYPE</label>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button onClick={() => setAnalystChartType('line')} className={`btn-secondary ${analystChartType === 'line' ? 'glow-card-active' : ''}`} style={{ flex: 1, padding: '8px', fontSize: '12px' }}>Line Plot</button>
-                    <button onClick={() => setAnalystChartType('bar')} className={`btn-secondary ${analystChartType === 'bar' ? 'glow-card-active' : ''}`} style={{ flex: 1, padding: '8px', fontSize: '12px' }}>Bar Graph</button>
+                {/* Upload / New buttons */}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button className="btn-primary" style={{ flex: 1, fontSize: '11px', padding: '8px 6px', justifyContent: 'center', gap: '4px' }}
+                    onClick={() => { setEditorDataset({ name: '', headers: ['Column 1', 'Column 2', 'Column 3'], rows: [['', '', '']] }); setAnalystView('editor'); setDatasetEditorMode('manual'); }}>
+                    <Plus size={12} /> New
+                  </button>
+                  <button className="btn-secondary" style={{ flex: 1, fontSize: '11px', padding: '8px 6px', justifyContent: 'center', gap: '4px' }}
+                    disabled={isUploadParsing} onClick={() => fileInputRef.current?.click()}>
+                    {isUploadParsing ? <RefreshCw size={12} style={{ animation: 'spin-slow 1s linear infinite' }} /> : <Download size={12} />}
+                    Upload
+                  </button>
+                </div>
+                <p style={{ margin: 0, fontSize: '10px', color: 'var(--text-dark)' }}>Supports .xlsx, .csv, .pdf</p>
+
+                <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
+                  <p style={{ margin: '0 0 8px', fontSize: '11px', color: 'var(--text-muted)', fontWeight: 'bold' }}>MY DATASETS ({userDatasets.length})</p>
+                  {userDatasets.length === 0 && (
+                    <p style={{ fontSize: '12px', color: 'var(--text-dark)', lineHeight: '1.5' }}>No datasets yet. Upload a file or create one manually.</p>
+                  )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {userDatasets.map(ds => (
+                      <div key={ds.name} onClick={() => { setActiveDatasetName(ds.name); setAnalystView('list'); }}
+                        style={{ padding: '10px 12px', borderRadius: '8px', cursor: 'pointer', border: `1px solid ${activeDatasetName === ds.name ? 'rgba(139,92,246,0.5)' : 'var(--border-color)'}`, background: activeDatasetName === ds.name ? 'rgba(139,92,246,0.08)' : 'transparent', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ overflow: 'hidden' }}>
+                          <p style={{ margin: 0, fontSize: '12px', fontWeight: '600', color: 'white', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ds.name}</p>
+                          <p style={{ margin: 0, fontSize: '10px', color: 'var(--text-dark)' }}>{ds.rows?.length} rows · {ds.headers?.length} cols</p>
+                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); handleDeleteDataset(ds.name); }}
+                          style={{ background: 'none', border: 'none', color: 'var(--text-dark)', cursor: 'pointer', padding: '2px', flexShrink: 0 }}>
+                          <Trash size={12} />
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
 
-              <div className="analyst-main">
-                <div className="glow-card" style={{ padding: '20px', marginBottom: '24px' }}>
-                  <h4 style={{ margin: '0 0 12px', fontSize: '14px' }}>Dataset Matrix: {SAMPLE_DATASETS[analystDataset].title}</h4>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '1px solid var(--border-color)', textAlign: 'left' }}>
-                        {SAMPLE_DATASETS[analystDataset].headers.map((head, idx) => (
-                          <th key={idx} style={{ padding: '8px', color: 'var(--text-muted)' }}>{head}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {SAMPLE_DATASETS[analystDataset].rows.map((row, rIdx) => (
-                        <tr key={rIdx} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                          {row.map((cell, cIdx) => (
-                            <td key={cIdx} style={{ padding: '8px', color: cIdx === 0 ? 'white' : 'var(--text-muted)' }}>{cell}</td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+              {/* ── MAIN AREA ── */}
+              <div style={{ flexGrow: 1, overflowY: 'auto', padding: '24px' }}>
 
-                <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
-                  <input 
-                    type="text"
-                    value={analystPrompt}
-                    onChange={(e) => setAnalystPrompt(e.target.value)}
-                    placeholder="Ask analyst agent to process the table (e.g. 'Project total 2026 revenue curve')"
-                    className="input-field"
-                    style={{ flexGrow: 1 }}
-                    disabled={isAnalyzing}
-                  />
-                  <button onClick={handleRunAnalysis} className="btn-primary" disabled={isAnalyzing || !analystPrompt.trim()}>
-                    {isAnalyzing ? <RefreshCw size={14} className="spin-slow" style={{ animation: 'spin-slow 3s linear infinite' }} /> : <LineChart size={14} />}
-                    <span>Compile Graph</span>
-                  </button>
-                </div>
+                {/* LIST VIEW: show selected dataset + analysis trigger */}
+                {analystView === 'list' && (
+                  <div>
+                    {!activeDatasetName ? (
+                      <div style={{ textAlign: 'center', padding: '80px 20px' }}>
+                        <Database size={48} color="var(--text-dark)" style={{ marginBottom: '16px' }} />
+                        <h3 style={{ color: 'var(--text-muted)' }}>Select or create a dataset to begin</h3>
+                        <p style={{ color: 'var(--text-dark)', fontSize: '13px' }}>Upload an Excel/CSV/PDF file or manually enter data in the table editor.</p>
+                      </div>
+                    ) : (() => {
+                      const ds = userDatasets.find(d => d.name === activeDatasetName);
+                      if (!ds) return null;
+                      return (
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px' }}>
+                            <div>
+                              <h2 style={{ margin: 0, fontSize: '18px' }}>{ds.name}</h2>
+                              <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--text-dark)' }}>{ds.rows.length} rows · {ds.headers.length} columns · Updated {ds.updatedAt}</p>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button className="btn-secondary" style={{ fontSize: '12px' }} onClick={handleExportCSV}><Download size={13} /> Export CSV</button>
+                              <button className="btn-secondary" style={{ fontSize: '12px' }}
+                                onClick={() => { setEditorDataset({ name: ds.name, headers: [...ds.headers], rows: ds.rows.map(r => [...r]) }); setAnalystView('editor'); }}>
+                                <Code size={13} /> Edit Data
+                              </button>
+                            </div>
+                          </div>
 
-                <div className="analyst-grid">
-                  <div className="glow-card" style={{ padding: '24px', minHeight: '320px', display: 'flex', flexDirection: 'column' }}>
-                    <h4 style={{ margin: '0 0 20px', fontSize: '14px' }}>SVG Visual Output</h4>
-                    <div style={{ flexGrow: 1, display: 'flex', alignItems: 'flex-end', height: '220px' }}>
-                      {isAnalyzing ? (
-                        <div style={{ width: '100%', textAlign: 'center' }}><RefreshCw className="spin-slow" style={{ animation: 'spin-slow 2s linear infinite' }} /></div>
-                      ) : (
-                        <svg viewBox="0 0 500 200" style={{ width: '100%', height: '100%', overflow: 'visible' }}>
-                          <path 
-                            d={`M ${analystOutput.chartData.map((val, idx) => {
-                              const x = (idx / (analystOutput.chartData.length - 1)) * 500;
-                              const y = 180 - (val / Math.max(...analystOutput.chartData)) * 140;
-                              return `${x},${y}`;
-                            }).join(' L ')}`}
-                            fill="none"
-                            stroke="var(--secondary)"
-                            strokeWidth="3"
-                          />
-                          {analystOutput.chartData.map((val, idx) => {
-                            const x = (idx / (analystOutput.chartData.length - 1)) * 500;
-                            const y = 180 - (val / Math.max(...analystOutput.chartData)) * 140;
-                            return <circle key={idx} cx={x} cy={y} r="5" fill="var(--primary)" stroke="white" strokeWidth="1.5" />;
-                          })}
-                        </svg>
+                          {/* Data table preview */}
+                          <div className="glow-card" style={{ padding: '16px', marginBottom: '20px', overflowX: 'auto' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '400px' }}>
+                              <thead>
+                                <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                  {ds.headers.map((h, i) => <th key={i} style={{ padding: '8px 12px', color: 'var(--text-muted)', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>)}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {ds.rows.slice(0, 20).map((row, ri) => (
+                                  <tr key={ri} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                    {row.map((cell, ci) => <td key={ci} style={{ padding: '7px 12px', color: ci === 0 ? 'white' : 'var(--text-muted)' }}>{cell}</td>)}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            {ds.rows.length > 20 && <p style={{ margin: '8px 0 0', fontSize: '11px', color: 'var(--text-dark)' }}>Showing 20 of {ds.rows.length} rows.</p>}
+                          </div>
+
+                          {/* AI Analysis Panel */}
+                          <div className="glow-card" style={{ padding: '20px' }}>
+                            <h4 style={{ margin: '0 0 12px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}><Sparkles size={14} color="var(--primary)" /> AI Analysis</h4>
+                            <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
+                              <input type="text" className="input-field" style={{ flexGrow: 1 }}
+                                value={aiAnalystPrompt} onChange={e => setAiAnalystPrompt(e.target.value)}
+                                placeholder="Ask the AI anything about this data (e.g. 'Show revenue trend', 'Find top performers')" />
+                              <button className="btn-primary" onClick={handleAiAnalyzeDataset} disabled={isAnalyzing}>
+                                {isAnalyzing ? <RefreshCw size={14} style={{ animation: 'spin-slow 1s linear infinite' }} /> : <LineChart size={14} />}
+                                Analyze
+                              </button>
+                            </div>
+                            <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-dark)' }}>
+                              {apiProvider === 'fallback' ? '⚠ Using template mode. Configure Gemini/OpenAI in Credentials for live AI insights.' : `✓ Using ${apiProvider.toUpperCase()} for live AI analysis.`}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {/* EDITOR VIEW: manual table entry */}
+                {analystView === 'editor' && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px' }}>
+                      <h2 style={{ margin: 0, fontSize: '18px' }}>{editorDataset.name || 'New Dataset'}</h2>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button className="btn-secondary" style={{ fontSize: '12px' }} onClick={() => setAnalystView('list')}><X size={13} /> Cancel</button>
+                        <button className="btn-primary" style={{ fontSize: '12px' }} onClick={handleSaveDataset}><Check size={13} /> Save Dataset</button>
+                      </div>
+                    </div>
+
+                    <div className="glow-card" style={{ padding: '20px', marginBottom: '16px' }}>
+                      <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>DATASET NAME</label>
+                      <input type="text" className="input-field" style={{ width: '100%' }} placeholder="e.g. Sales Q1 2026"
+                        value={editorDataset.name} onChange={e => setEditorDataset(prev => ({ ...prev, name: e.target.value }))} />
+                    </div>
+
+                    {/* Column controls */}
+                    <div className="glow-card" style={{ padding: '16px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Columns: {editorDataset.headers.length}</span>
+                      <button className="btn-secondary" style={{ fontSize: '11px', padding: '5px 10px' }}
+                        onClick={() => setEditorDataset(prev => ({ ...prev, headers: [...prev.headers, `Column ${prev.headers.length + 1}`], rows: prev.rows.map(r => [...r, '']) }))}>
+                        <Plus size={11} /> Add Column
+                      </button>
+                      <button className="btn-secondary" style={{ fontSize: '11px', padding: '5px 10px' }}
+                        onClick={() => setEditorDataset(prev => ({ ...prev, rows: [...prev.rows, Array(prev.headers.length).fill('')] }))}>
+                        <Plus size={11} /> Add Row
+                      </button>
+                      {editorDataset.headers.length > 1 && (
+                        <button className="btn-secondary" style={{ fontSize: '11px', padding: '5px 10px', color: 'var(--error)' }}
+                          onClick={() => setEditorDataset(prev => ({ ...prev, headers: prev.headers.slice(0, -1), rows: prev.rows.map(r => r.slice(0, -1)) }))}>
+                          <Trash size={11} /> Remove Last Col
+                        </button>
                       )}
                     </div>
-                  </div>
 
-                  <div className="glow-card" style={{ padding: '24px' }}>
-                    <h4 style={{ margin: '0 0 16px', fontSize: '14px' }}>AlphaCap Agent Insights</h4>
-                    <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.6', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '8px' }}>
-                      {analystOutput.summary}
-                    </p>
-                    <ul style={{ paddingLeft: '20px', fontSize: '12px', color: 'var(--text-muted)' }}>
-                      {analystOutput.insights.map((ins, idx) => <li key={idx} style={{ marginBottom: '6px' }}>{ins}</li>)}
-                    </ul>
+                    {/* Editable table */}
+                    <div className="glow-card" style={{ padding: '16px', overflowX: 'auto' }}>
+                      <table style={{ borderCollapse: 'collapse', fontSize: '12px', width: '100%', minWidth: `${editorDataset.headers.length * 140}px` }}>
+                        <thead>
+                          <tr>
+                            {editorDataset.headers.map((h, ci) => (
+                              <th key={ci} style={{ padding: '4px', borderBottom: '1px solid var(--border-color)' }}>
+                                <input type="text" value={h} onChange={e => setEditorDataset(prev => { const headers = [...prev.headers]; headers[ci] = e.target.value; return { ...prev, headers }; })}
+                                  style={{ background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '4px', color: 'var(--primary)', padding: '5px 8px', width: '100%', fontWeight: '700', fontSize: '12px' }} />
+                              </th>
+                            ))}
+                            <th style={{ width: '32px' }} />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {editorDataset.rows.map((row, ri) => (
+                            <tr key={ri} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                              {row.map((cell, ci) => (
+                                <td key={ci} style={{ padding: '3px' }}>
+                                  <input type="text" value={cell} onChange={e => setEditorDataset(prev => { const rows = prev.rows.map(r => [...r]); rows[ri][ci] = e.target.value; return { ...prev, rows }; })}
+                                    style={{ background: 'transparent', border: '1px solid transparent', borderRadius: '4px', color: 'white', padding: '5px 8px', width: '100%', fontSize: '12px', outline: 'none' }}
+                                    onFocus={e => e.target.style.borderColor = 'rgba(139,92,246,0.4)'}
+                                    onBlur={e => e.target.style.borderColor = 'transparent'} />
+                                </td>
+                              ))}
+                              <td style={{ padding: '3px' }}>
+                                <button onClick={() => setEditorDataset(prev => ({ ...prev, rows: prev.rows.filter((_, i) => i !== ri) }))}
+                                  style={{ background: 'none', border: 'none', color: 'var(--text-dark)', cursor: 'pointer', padding: '4px' }}>
+                                  <X size={12} />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {/* ANALYSIS VIEW: AI output */}
+                {analystView === 'analysis' && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                      <h2 style={{ margin: 0, fontSize: '18px' }}>AI Analysis: {activeDatasetName}</h2>
+                      <button className="btn-secondary" style={{ fontSize: '12px' }} onClick={() => setAnalystView('list')}><X size={13} /> Back to Data</button>
+                    </div>
+
+                    {isAnalyzing ? (
+                      <div style={{ textAlign: 'center', padding: '80px 20px' }}>
+                        <RefreshCw size={40} color="var(--primary)" style={{ animation: 'spin-slow 1s linear infinite', marginBottom: '16px' }} />
+                        <p style={{ color: 'var(--text-muted)' }}>AlphaCap is analyzing your data…</p>
+                      </div>
+                    ) : analysisResult && (
+                      <div>
+                        {/* Chart */}
+                        <div className="glow-card" style={{ padding: '24px', marginBottom: '20px' }}>
+                          <h4 style={{ margin: '0 0 20px', fontSize: '14px' }}>Data Visualization</h4>
+                          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                            <button onClick={() => setAnalystChartType('line')} className={`btn-secondary ${analystChartType === 'line' ? 'glow-card-active' : ''}`} style={{ fontSize: '12px', padding: '6px 12px' }}>Line Plot</button>
+                            <button onClick={() => setAnalystChartType('bar')} className={`btn-secondary ${analystChartType === 'bar' ? 'glow-card-active' : ''}`} style={{ fontSize: '12px', padding: '6px 12px' }}>Bar Graph</button>
+                          </div>
+                          <svg viewBox="0 0 520 200" style={{ width: '100%', height: '220px', overflow: 'visible' }}>
+                            {/* Grid lines */}
+                            {[0, 1, 2, 3, 4].map(i => <line key={i} x1="0" y1={i * 40} x2="520" y2={i * 40} stroke="rgba(255,255,255,0.04)" strokeWidth="1" />)}
+                            {analystChartType === 'line' ? (
+                              <>
+                                <path d={`M ${analysisResult.chartData.map((v, i) => { const mx = Math.max(...analysisResult.chartData) || 1; return `${(i/(analysisResult.chartData.length-1||1))*500+10},${180-(v/mx)*150}`; }).join(' L ')}`}
+                                  fill="none" stroke="var(--secondary)" strokeWidth="2.5" />
+                                {analysisResult.chartData.map((v, i) => { const mx = Math.max(...analysisResult.chartData) || 1; const x = (i/(analysisResult.chartData.length-1||1))*500+10; const y = 180-(v/mx)*150; return <circle key={i} cx={x} cy={y} r="5" fill="var(--primary)" stroke="white" strokeWidth="1.5" />; })}
+                              </>
+                            ) : (
+                              analysisResult.chartData.map((v, i) => {
+                                const mx = Math.max(...analysisResult.chartData) || 1;
+                                const bw = Math.min(40, 480/analysisResult.chartData.length - 6);
+                                const x = 10 + (i * (480/analysisResult.chartData.length)) + (480/analysisResult.chartData.length - bw)/2;
+                                const h = (v/mx)*150;
+                                return <rect key={i} x={x} y={180-h} width={bw} height={h} rx="3" fill="url(#barGrad)" />;
+                              })
+                            )}
+                            <defs><linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--primary)" /><stop offset="100%" stopColor="var(--secondary)" /></linearGradient></defs>
+                          </svg>
+                        </div>
+
+                        {/* Insights */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                          <div className="glow-card" style={{ padding: '20px' }}>
+                            <h4 style={{ margin: '0 0 12px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}><Sparkles size={14} color="var(--primary)" /> AI Summary</h4>
+                            <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.7' }}>{analysisResult.summary}</p>
+                          </div>
+                          <div className="glow-card" style={{ padding: '20px' }}>
+                            <h4 style={{ margin: '0 0 12px', fontSize: '14px' }}>Key Insights</h4>
+                            <ul style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {analysisResult.insights.map((ins, i) => (
+                                <li key={i} style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.5' }}>{ins}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+
+                        {/* Re-analyze */}
+                        <div style={{ marginTop: '20px', display: 'flex', gap: '10px' }}>
+                          <input type="text" className="input-field" style={{ flexGrow: 1 }}
+                            value={aiAnalystPrompt} onChange={e => setAiAnalystPrompt(e.target.value)}
+                            placeholder="Ask a follow-up question about the data…" />
+                          <button className="btn-primary" onClick={handleAiAnalyzeDataset} disabled={isAnalyzing}>
+                            <Sparkles size={14} /> Re-Analyze
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
