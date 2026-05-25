@@ -874,6 +874,73 @@ export default function App() {
   const [cpuUsage, setCpuUsage] = useState(19);
   const [memoryUsage, setMemoryUsage] = useState(4.1);
 
+  // DATABASE / AUTHENTICATION INTEGRATION STATE
+  const [currentUser, setCurrentUser] = useState(() => localStorage.getItem('aos_logged_in_user') || '');
+  const [userDirectory, setUserDirectory] = useState([]);
+  const [sandboxHistory, setSandboxHistory] = useState([]);
+
+  // Fetch all users list for database stats
+  const fetchUserDirectory = async () => {
+    try {
+      const res = await fetch('/api/users');
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setUserDirectory(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch user directory', e);
+    }
+  };
+
+  // Fetch sandbox prompt logs from database
+  const fetchSandboxHistory = async (user) => {
+    if (!user) return;
+    try {
+      const res = await fetch(`/api/sandbox/${user}`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setSandboxHistory(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch sandbox history', e);
+    }
+  };
+
+  // Fetch chat records for active agent
+  const fetchChats = async (user, agentId) => {
+    if (!user || !agentId) return;
+    try {
+      const res = await fetch(`/api/chats/${user}/${agentId}`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setChats(prev => ({
+          ...prev,
+          [agentId]: data.length > 0 ? data : [
+            agentId === 'devon-x' ? { sender: 'agent', text: 'Hello, I am Devon-X. If you have supplied an API Key in the Credentials panel (or inside a local .env file), I will make real LLM requests to generate and refine files in the sandbox. Otherwise, I will use high-fidelity template logic.', timestamp: '15:01', monologue: 'Connected. Waiting for prompt.' } :
+            agentId === 'alphacap' ? { sender: 'agent', text: 'AlphaCap Analyst online. Ingesting Q1 2026 indexes. I can run real analysis if configured, or use standard local matrix compilers.', timestamp: '15:02' } :
+            { sender: 'agent', text: 'SwarmCore is active. Input your swarm telemetry brief on the Swarm tab to trigger collaborative execution.', timestamp: '15:03' }
+          ]
+        }));
+      }
+    } catch (e) {
+      console.error('Failed to fetch chats', e);
+    }
+  };
+
+  // Synchronization triggers
+  useEffect(() => {
+    if (currentUser) {
+      fetchChats(currentUser, selectedAgentId);
+    }
+  }, [currentUser, selectedAgentId]);
+
+  useEffect(() => {
+    if (currentUser) {
+      fetchSandboxHistory(currentUser);
+      fetchUserDirectory();
+    }
+  }, [currentUser]);
+
   // Sync settings and custom agents to localStorage
   useEffect(() => {
     localStorage.setItem('aos_api_provider', apiProvider);
@@ -1104,10 +1171,11 @@ export default function App() {
     e.preventDefault();
     if (!currentInput.trim()) return;
 
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const userMsg = {
       sender: 'user',
       text: currentInput,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      timestamp: time
     };
 
     const agentKey = selectedAgent.id;
@@ -1118,6 +1186,19 @@ export default function App() {
 
     const promptText = currentInput;
     setCurrentInput('');
+
+    // Save user chat message to database
+    fetch('/api/chats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: currentUser,
+        agentId: agentKey,
+        sender: 'user',
+        text: promptText,
+        timestamp: time
+      })
+    }).catch(err => console.error(err));
 
     const tempAgentMsg = {
       sender: 'agent',
@@ -1145,6 +1226,7 @@ export default function App() {
         monologue = `Response compiled using ${apiProvider.toUpperCase()} model integration.`;
       }
 
+      const agentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       setChats(prev => {
         const currentList = prev[agentKey].slice(0, -1);
         return {
@@ -1154,14 +1236,29 @@ export default function App() {
             {
               sender: 'agent',
               text: replyText,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              timestamp: agentTime,
               monologue: monologue
             }
           ]
         };
       });
 
+      // Save agent reply to database
+      fetch('/api/chats', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: currentUser,
+          agentId: agentKey,
+          sender: 'agent',
+          text: replyText,
+          timestamp: agentTime,
+          monologue: monologue
+        })
+      }).catch(err => console.error(err));
+
     } catch (err) {
+      const errorTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       setChats(prev => {
         const currentList = prev[agentKey].slice(0, -1);
         return {
@@ -1177,11 +1274,36 @@ export default function App() {
           ]
         };
       });
+
+      // Save agent error message to database
+      fetch('/api/chats', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: currentUser,
+          agentId: agentKey,
+          sender: 'agent',
+          text: `Error connecting to API provider: ${err.message}`,
+          timestamp: errorTime,
+          monologue: 'Connection Exception triggered.'
+        })
+      }).catch(err => console.error(err));
     }
   };
 
   const handleGenerateCode = async () => {
     if (!sandboxPrompt.trim()) return;
+
+    // Save prompt generation log to database history
+    fetch('/api/sandbox', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: currentUser,
+        prompt: sandboxPrompt
+      })
+    }).then(() => fetchSandboxHistory(currentUser))
+      .catch(err => console.error(err));
 
     setIsCodingInProgress(true);
     setCodingProgress(10);
@@ -1360,6 +1482,113 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
     }, 11000);
   };
 
+  if (!currentUser) {
+    return (
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '100vw',
+        height: '100vh',
+        background: 'var(--bg-main)',
+        position: 'relative',
+        overflow: 'hidden'
+      }}>
+        {/* Decorative Grid and Ambient Lights */}
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          backgroundImage: 'radial-gradient(at 50% 50%, rgba(139, 92, 246, 0.12) 0px, transparent 50%)',
+          pointerEvents: 'none'
+        }} />
+        
+        <form 
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const usernameInput = e.target.username.value;
+            const passwordInput = e.target.password.value;
+            if (!usernameInput || !passwordInput) return;
+            try {
+              const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: usernameInput, password: passwordInput })
+              });
+              const data = await res.json();
+              if (res.ok && data.success) {
+                localStorage.setItem('aos_logged_in_user', data.username);
+                setCurrentUser(data.username);
+              } else {
+                alert(data.error || 'Login failed');
+              }
+            } catch (err) {
+              alert('Error connecting to database server: ' + err.message);
+            }
+          }}
+          className="glow-card" 
+          style={{ 
+            padding: '40px', 
+            width: '90%', 
+            maxWidth: '420px', 
+            display: 'flex', 
+            flexDirection: 'column', 
+            gap: '20px',
+            background: 'var(--bg-sidebar)',
+            border: '1px solid rgba(139, 92, 246, 0.2)',
+            zIndex: 10
+          }}
+        >
+          <div style={{ textAlign: 'center', marginBottom: '10px' }}>
+            <div style={{
+              background: 'linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%)',
+              width: '48px',
+              height: '48px',
+              borderRadius: '12px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 0 20px var(--primary-glow)',
+              marginBottom: '16px'
+            }}>
+              <Layers size={24} color="white" />
+            </div>
+            <h1 style={{ margin: 0, fontSize: '24px', fontWeight: '800' }} className="text-gradient">AosAI Agent Hub</h1>
+            <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>Secure Developer & SWARM Gateway</p>
+          </div>
+
+          <div>
+            <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>USER IDENTIFIER</label>
+            <input 
+              name="username"
+              type="text" 
+              placeholder="Enter username"
+              className="input-field"
+              style={{ width: '100%' }}
+              required
+            />
+          </div>
+
+          <div>
+            <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>ACCESS PASSCODE</label>
+            <input 
+              name="password"
+              type="password" 
+              placeholder="Enter password"
+              className="input-field"
+              style={{ width: '100%' }}
+              required
+            />
+            <p style={{ margin: '6px 0 0', fontSize: '10px', color: 'var(--text-dark)' }}>* New users will be auto-registered with the password supplied.</p>
+          </div>
+
+          <button type="submit" className="btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '12px', marginTop: '10px' }}>
+            <Zap size={16} fill="white" /> Access Agent Workspace
+          </button>
+        </form>
+      </div>
+    );
+  }
+
   return (
     <div className="app-container">
       {/* Mobile Top Header */}
@@ -1400,7 +1629,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
             </div>
             <div>
               <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '800', letterSpacing: '-0.5px' }} className="text-gradient">AosAI</h2>
-              <p style={{ margin: 0, fontSize: '10px', color: 'var(--text-dark)', fontWeight: '600', textTransform: 'uppercase' }}>Production Agent Hub</p>
+              <p style={{ margin: 0, fontSize: '10px', color: 'var(--text-muted)', fontWeight: '600' }}>User: <span style={{ color: 'var(--secondary)' }}>{currentUser}</span></p>
             </div>
           </div>
         </div>
@@ -1439,6 +1668,11 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
           <button onClick={() => setActiveTab('marketplace')} style={navBtnStyle(activeTab === 'marketplace')}>
             <Settings size={16} />
             <span>LLM Credentials</span>
+          </button>
+
+          <button onClick={() => setActiveTab('users')} style={navBtnStyle(activeTab === 'users')}>
+            <User size={16} />
+            <span>Login History</span>
           </button>
         </nav>
 
@@ -1670,6 +1904,37 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
                     <Eye size={14} color="var(--secondary)" />
                     <span>Run Preview</span>
                   </button>
+
+                  {sandboxHistory.length > 0 && (
+                    <>
+                      <div style={{ margin: '20px 8px 4px', fontSize: '11px', color: 'var(--text-dark)', fontWeight: 'bold', textTransform: 'uppercase' }}>PROMPT HISTORY</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '180px', overflowY: 'auto', padding: '0 4px' }}>
+                        {sandboxHistory.slice(0, 5).map((entry, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => setSandboxPrompt(entry.prompt)}
+                            style={{
+                              textAlign: 'left',
+                              background: 'rgba(255,255,255,0.02)',
+                              border: '1px solid var(--border-color)',
+                              borderRadius: '4px',
+                              padding: '6px 8px',
+                              fontSize: '11px',
+                              color: 'var(--text-muted)',
+                              cursor: 'pointer',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              transition: 'all 0.2s'
+                            }}
+                            title={entry.prompt}
+                          >
+                            🕒 {entry.prompt}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -2025,6 +2290,93 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
                         Connected to **Real LLM Pipeline**. Coding Sandbox requests will invoke **{apiProvider.toUpperCase()}** to output actual structural changes directly!
                       </span>
                     )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 6: USER DIRECTORY / LOGIN HISTORY */}
+          {activeTab === 'users' && (
+            <div style={{ padding: '32px', height: '100%', overflowY: 'auto' }} className="animate-fade">
+              <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: '20px' }}>User Session & Login Directory</h2>
+                    <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>Real-time login auditing and access frequency logs.</p>
+                  </div>
+                  <button onClick={fetchUserDirectory} className="btn-secondary" style={{ padding: '8px 16px' }}>
+                    <RefreshCw size={14} /> Refresh Directory
+                  </button>
+                </div>
+
+                <div className="glow-card" style={{ padding: '24px', marginBottom: '24px' }}>
+                  <h3 style={{ margin: '0 0 16px', fontSize: '14px', color: 'white' }}>Audit Log ({userDirectory.length} active profiles)</h3>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-color)', textAlign: 'left' }}>
+                        <th style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>Username</th>
+                        <th style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>Login Count</th>
+                        <th style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>Last Access Time</th>
+                        <th style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>Authentication Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {userDirectory.map((usr, idx) => (
+                        <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                          <td style={{ padding: '12px 8px', fontWeight: '600', color: usr.username === currentUser ? 'var(--secondary)' : 'white' }}>
+                            {usr.username} {usr.username === currentUser && ' (You)'}
+                          </td>
+                          <td style={{ padding: '12px 8px', fontFamily: 'var(--font-mono)' }}>
+                            <span style={{ background: 'rgba(139, 92, 246, 0.1)', padding: '2px 8px', borderRadius: '10px', color: 'var(--primary)' }}>
+                              {usr.login_count} logins
+                            </span>
+                          </td>
+                          <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>{usr.last_login}</td>
+                          <td style={{ padding: '12px 8px' }}>
+                            <span style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '11px',
+                              color: 'var(--success)',
+                              background: 'rgba(16, 185, 129, 0.1)',
+                              padding: '2px 6px',
+                              borderRadius: '4px'
+                            }}>
+                              <Check size={10} /> Active Database Entry
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                  <div className="glow-card" style={{ padding: '24px' }}>
+                    <h3 style={{ margin: '0 0 8px', fontSize: '14px' }}>Active User: {currentUser}</h3>
+                    <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+                      You are authenticated as **{currentUser}**. All chat histories and sandboxed compilation queries are automatically synchronized and logged under your user identifier on our Express database server.
+                    </p>
+                    <button 
+                      onClick={() => {
+                        localStorage.removeItem('aos_logged_in_user');
+                        setCurrentUser('');
+                      }} 
+                      className="btn-secondary" 
+                      style={{ marginTop: '16px', color: 'var(--error)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
+                    >
+                      Log Out Session
+                    </button>
+                  </div>
+
+                  <div className="glow-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                    <h4 style={{ margin: '0 0 4px', fontSize: '13px', color: 'white' }}>Total Platform Sessions</h4>
+                    <div style={{ fontSize: '32px', fontWeight: '800', fontFamily: 'var(--font-mono)' }} className="text-gradient">
+                      {userDirectory.reduce((sum, u) => sum + (u.login_count || 0), 0)}
+                    </div>
+                    <p style={{ margin: '4px 0 0', fontSize: '11px', color: 'var(--text-dark)' }}>Aggregated logins recorded in local JSON database.</p>
                   </div>
                 </div>
               </div>
