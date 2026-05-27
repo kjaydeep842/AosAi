@@ -1029,6 +1029,7 @@ export default function App() {
   // SYSTEM STATE
   const [cpuUsage, setCpuUsage] = useState(19);
   const [memoryUsage, setMemoryUsage] = useState(4.1);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // DYNAMIC PRICING CONFIGURATION STATE
   const [pricingConfig, setPricingConfig] = useState(() => {
@@ -2968,18 +2969,8 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
         }} />
 
         {/* Global Nav Bar */}
-        <header className="header-glow-border" style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '20px 40px',
-          background: 'rgba(14, 17, 26, 0.8)',
-          backdropFilter: 'blur(10px)',
-          position: 'sticky',
-          top: 0,
-          zIndex: 50
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }} className="antigravity-float">
+        <header className="global-header header-glow-border">
+          <div className="header-brand antigravity-float">
             <img
               src="/aosai-logo.png"
               alt="AosAI Logo"
@@ -2993,12 +2984,28 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
             />
             <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '800' }} className="text-gradient">AosAI Agent Hub</h1>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '24px', fontSize: '14px' }}>
+          
+          <div className="header-nav-desktop">
             <a href="#features-showcase" className="header-link" onClick={(e) => { e.preventDefault(); document.getElementById('features-showcase')?.scrollIntoView({ behavior: 'smooth' }); }}>Features</a>
             <a href="#system-workflow" className="header-link" onClick={(e) => { e.preventDefault(); document.getElementById('system-workflow')?.scrollIntoView({ behavior: 'smooth' }); }}>Workflow</a>
             <a href="#pricing-section" className="header-link" onClick={(e) => { e.preventDefault(); document.getElementById('pricing-section')?.scrollIntoView({ behavior: 'smooth' }); }}>Pricing</a>
             <a href="#login-box" className="btn-cyber-header" onClick={(e) => { e.preventDefault(); document.getElementById('login-box')?.scrollIntoView({ behavior: 'smooth' }); }}>Sign In</a>
           </div>
+
+          <button className="header-hamburger" onClick={() => setMobileMenuOpen(!mobileMenuOpen)} aria-label="Toggle navigation menu">
+            <span className={`hamburger-bar ${mobileMenuOpen ? 'open' : ''}`}></span>
+            <span className={`hamburger-bar ${mobileMenuOpen ? 'open' : ''}`}></span>
+            <span className={`hamburger-bar ${mobileMenuOpen ? 'open' : ''}`}></span>
+          </button>
+
+          {mobileMenuOpen && (
+            <div className="header-nav-mobile">
+              <a href="#features-showcase" className="header-mobile-link" onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); document.getElementById('features-showcase')?.scrollIntoView({ behavior: 'smooth' }); }}>Features</a>
+              <a href="#system-workflow" className="header-mobile-link" onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); document.getElementById('system-workflow')?.scrollIntoView({ behavior: 'smooth' }); }}>Workflow</a>
+              <a href="#pricing-section" className="header-mobile-link" onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); document.getElementById('pricing-section')?.scrollIntoView({ behavior: 'smooth' }); }}>Pricing</a>
+              <a href="#login-box" className="btn-cyber-header" style={{ width: '100%', textAlign: 'center', boxSizing: 'border-box' }} onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); document.getElementById('login-box')?.scrollIntoView({ behavior: 'smooth' }); }}>Sign In</a>
+            </div>
+          )}
         </header>
 
         {/* Hero Section */}
