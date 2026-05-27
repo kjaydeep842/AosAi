@@ -101,6 +101,49 @@ app.post('/api/sandbox', (req, res) => {
   res.json({ success: true });
 });
 
+// Update user fields
+app.post('/api/users/update', (req, res) => {
+  const { username, updates } = req.body;
+  if (!username || !updates) {
+    return res.status(400).json({ error: 'Username and updates object are required' });
+  }
+  const result = db.updateUser(username, updates);
+  if (result) {
+    res.json({ success: true, user: result });
+  } else {
+    res.status(404).json({ error: 'User not found' });
+  }
+});
+
+// Delete user
+app.delete('/api/users/:username', (req, res) => {
+  const { username } = req.params;
+  const result = db.deleteUser(username);
+  res.json({ success: result });
+});
+
+// Pricing endpoints
+app.get('/api/pricing', (req, res) => {
+  const pricing = db.getPricing();
+  res.json(pricing);
+});
+
+app.post('/api/pricing', (req, res) => {
+  const updated = db.savePricing(req.body);
+  res.json({ success: true, pricing: updated });
+});
+
+// Models endpoints
+app.get('/api/models', (req, res) => {
+  const models = db.getModels();
+  res.json(models);
+});
+
+app.post('/api/models', (req, res) => {
+  const updated = db.saveModels(req.body);
+  res.json({ success: true, models: updated });
+});
+
 app.listen(PORT, () => {
   console.log(`Express JSON Database Server running on port ${PORT}`);
 });

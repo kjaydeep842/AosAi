@@ -411,10 +411,25 @@ pre.code-block {
    Mobile Responsive Media Queries (<= 768px)
    ========================================== */
 
+/* ==========================================
+   Tablet Responsive (769px – 1024px)
+   ========================================== */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .app-sidebar { width: 220px; }
+
+  .agents-sidebar-panel { width: 220px; }
+  .sandbox-files-panel { width: 180px; }
+  .swarm-sidebar { width: 240px; }
+  .analyst-sidebar { width: 220px; }
+
+  .analyst-grid { grid-template-columns: 1fr; gap: 16px; }
+}
+
+/* ==========================================
+   Mobile Responsive (<= 768px)
+   ========================================== */
 @media (max-width: 768px) {
-  .app-container {
-    flex-direction: column;
-  }
+  .app-container { flex-direction: column; }
 
   .mobile-header {
     display: flex;
@@ -440,15 +455,12 @@ pre.code-block {
     border-radius: 4px;
     transition: background 0.2s;
   }
-
-  .mobile-menu-btn:hover {
-    background: rgba(255, 255, 255, 0.05);
-  }
+  .mobile-menu-btn:hover { background: rgba(255,255,255,0.05); }
 
   .sidebar-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: rgba(0,0,0,0.6);
     backdrop-filter: blur(4px);
     z-index: 21;
   }
@@ -460,102 +472,178 @@ pre.code-block {
     bottom: 0;
     width: 260px;
     z-index: 22;
-    box-shadow: 10px 0 30px rgba(0, 0, 0, 0.5);
+    box-shadow: 10px 0 30px rgba(0,0,0,0.5);
     border-right: 1px solid var(--border-color);
   }
+  .app-sidebar.open { transform: translateX(260px); }
 
-  .app-sidebar.open {
-    transform: translateX(260px);
+  .main-viewport { height: calc(100vh - 56px); }
+
+  /* Workspace */
+  .workspace-layout { flex-direction: column; overflow-y: auto; }
+  .agents-sidebar-panel { width: 100%; border-top: 1px solid var(--border-color); border-left: none; flex-shrink: 0; max-height: 260px; }
+
+  .message-bubble { max-width: 92%; }
+
+  /* Sandbox */
+  .sandbox-layout { flex-direction: column; overflow-y: auto; }
+  .sandbox-files-panel { width: 100%; height: auto; max-height: 160px; border-right: none; border-bottom: 1px solid var(--border-color); }
+  .sandbox-editor-panel { width: 100%; min-height: 300px; flex-grow: 1; }
+
+  /* Analyst */
+  .analyst-layout { flex-direction: column; overflow-y: auto; }
+  .analyst-sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border-color); padding: 16px; }
+  .analyst-main { padding: 16px; height: auto; overflow: visible; }
+  .analyst-grid { grid-template-columns: 1fr; gap: 16px; }
+
+  /* Swarm */
+  .swarm-layout { flex-direction: column; overflow-y: auto; }
+  .swarm-sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border-color); padding: 16px; }
+  .swarm-flow { flex-direction: column; align-items: stretch; gap: 12px; }
+  .swarm-arrow { transform: rotate(90deg); align-self: center; margin: 4px 0; }
+}
+
+/* ==========================================
+   Antigravity & Cyber Design Custom Additions
+   ========================================== */
+
+/* Antigravity gentle float */
+@keyframes antigravity-float {
+  0% {
+    transform: translateY(0px) rotate(0deg);
   }
-
-  .main-viewport {
-    height: calc(100vh - 56px);
+  50% {
+    transform: translateY(-15px) rotate(1.5deg);
   }
-
-  /* Workspace Panel Mobile */
-  .workspace-layout {
-    flex-direction: column;
-    overflow-y: auto;
-  }
-
-  .agents-sidebar-panel {
-    width: 100%;
-    border-top: 1px solid var(--border-color);
-    border-left: none;
-    flex-shrink: 0;
-    max-height: 280px;
-  }
-
-  .message-bubble {
-    max-width: 90%;
-  }
-
-  /* Coding Sandbox Mobile */
-  .sandbox-layout {
-    flex-direction: column;
-    overflow-y: auto;
-  }
-
-  .sandbox-files-panel {
-    width: 100%;
-    height: auto;
-    max-height: 180px;
-    border-right: none;
-    border-bottom: 1px solid var(--border-color);
-  }
-
-  .sandbox-editor-panel {
-    width: 100%;
-    min-height: 320px;
-    flex-grow: 1;
-  }
-
-  /* Data Analyst Mobile */
-  .analyst-layout {
-    flex-direction: column;
-    overflow-y: auto;
-  }
-
-  .analyst-sidebar {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid var(--border-color);
-    padding: 16px;
-  }
-
-  .analyst-main {
-    padding: 16px;
-    height: auto;
-    overflow: visible;
-  }
-
-  .analyst-grid {
-    grid-template-columns: 1fr;
-    gap: 16px;
-  }
-
-  /* Swarm Dashboard Mobile */
-  .swarm-layout {
-    flex-direction: column;
-    overflow-y: auto;
-  }
-
-  .swarm-sidebar {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid var(--border-color);
-    padding: 16px;
-  }
-
-  .swarm-flow {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
-  }
-
-  .swarm-arrow {
-    transform: rotate(90deg);
-    align-self: center;
-    margin: 4px 0;
+  100% {
+    transform: translateY(0px) rotate(0deg);
   }
 }
+
+.antigravity-float {
+  animation: antigravity-float 6s ease-in-out infinite;
+}
+
+/* Antigravity floating bubbles/nodes background */
+@keyframes antigravity-rise {
+  0% {
+    transform: translateY(120vh) translateX(0) scale(0.8);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.15;
+  }
+  90% {
+    opacity: 0.15;
+  }
+  100% {
+    transform: translateY(-20vh) translateX(var(--drift-x, 30px)) scale(1.2);
+    opacity: 0;
+  }
+}
+
+.antigravity-particle {
+  position: absolute;
+  bottom: -50px;
+  background: radial-gradient(circle, var(--primary) 0%, transparent 70%);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  mix-blend-mode: screen;
+}
+
+/* Header line animation */
+@keyframes header-border-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.header-glow-border {
+  position: relative;
+}
+.header-glow-border::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, var(--primary), var(--secondary), var(--accent), var(--primary));
+  background-size: 300% 300%;
+  animation: header-border-shift 4s ease infinite;
+}
+
+/* Cyber header link */
+.header-link {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-weight: 600;
+  position: relative;
+  transition: color 0.3s ease;
+}
+.header-link:hover {
+  color: white;
+}
+.header-link::after {
+  content: '';
+  position: absolute;
+  width: 100%;
+  transform: scaleX(0);
+  height: 2px;
+  bottom: -6px;
+  left: 0;
+  background: linear-gradient(90deg, var(--primary), var(--secondary));
+  transform-origin: bottom center;
+  transition: transform 0.25s ease-out;
+}
+.header-link:hover::after {
+  transform: scaleX(1);
+}
+
+/* Glowing cyberpunk Sign-In buttons */
+.btn-cyber-header {
+  background: transparent;
+  color: white;
+  border: 1px solid var(--secondary);
+  padding: 8px 20px;
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s ease;
+  box-shadow: 0 0 10px rgba(6, 182, 212, 0.1);
+  text-decoration: none;
+}
+.btn-cyber-header:hover {
+  background: rgba(6, 182, 212, 0.1);
+  box-shadow: 0 0 15px rgba(6, 182, 212, 0.4), inset 0 0 10px rgba(6, 182, 212, 0.2);
+  transform: scale(1.05);
+}
+
+.btn-cyber-submit {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 50%, var(--accent) 100%);
+  background-size: 200% auto;
+  color: white;
+  border: none;
+  padding: 14px 28px;
+  border-radius: 8px;
+  font-weight: bold;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.4s ease;
+  box-shadow: 0 4px 15px rgba(139, 92, 246, 0.3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.btn-cyber-submit:hover {
+  background-position: right center;
+  box-shadow: 0 6px 20px rgba(139, 92, 246, 0.5), 0 0 15px rgba(6, 182, 212, 0.3);
+  transform: translateY(-2px);
+}
+

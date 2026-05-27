@@ -6,7 +6,7 @@ import {
   Check, AlertCircle, Folder, FileCode, Settings2, Share2, 
   FileText, ChevronRight, Download, User, ListTodo, HelpCircle, 
   Activity, Compass, Shield, Zap, Search, AlertTriangle, 
-  BookOpen, Code2, Globe, MessageSquare, Maximize2, Minimize2, Key, TerminalSquare, X, Menu
+  BookOpen, Code2, Globe, MessageSquare, Maximize2, Minimize2, Key, TerminalSquare, X, Menu, ExternalLink
 } from 'lucide-react';
 
 // ==========================================
@@ -805,9 +805,42 @@ const localDbAPI = {
 
   getUsers: () => {
     const dbData = getLocalDb();
+    const now = new Date().toLocaleString();
     return dbData.users
-      .map(u => ({ username: u.username, login_count: u.loginCount, last_login: u.lastLogin }))
+      .map(u => ({ 
+        username: u.username, 
+        password: u.password,
+        login_count: u.loginCount || 1, 
+        last_login: u.lastLogin || now,
+        tier: u.tier || 'sandbox',
+        billingCycle: u.billingCycle || 'monthly',
+        problemsCount: u.problemsCount !== undefined ? u.problemsCount : Math.floor(Math.random() * 10) + 1,
+        registeredAt: u.registeredAt || u.lastLogin || now
+      }))
       .sort((a, b) => new Date(b.last_login) - new Date(a.last_login));
+  },
+
+  updateUser: (username, updates) => {
+    const dbData = getLocalDb();
+    const user = dbData.users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    if (user) {
+      Object.assign(user, updates);
+      saveLocalDb(dbData);
+      return user;
+    }
+    return null;
+  },
+
+  deleteUser: (username) => {
+    const dbData = getLocalDb();
+    dbData.users = dbData.users.filter(u => u.username.toLowerCase() !== username.toLowerCase());
+    dbData.chats = dbData.chats.filter(c => c.username.toLowerCase() !== username.toLowerCase());
+    dbData.sandboxHistory = dbData.sandboxHistory.filter(s => s.username.toLowerCase() !== username.toLowerCase());
+    if (dbData.userDatasets) {
+      dbData.userDatasets = dbData.userDatasets.filter(d => d.username.toLowerCase() !== username.toLowerCase());
+    }
+    saveLocalDb(dbData);
+    return true;
   },
 
   getChats: (username, agentId) => {
@@ -872,6 +905,10 @@ export default function App() {
   // Navigation State
   const [activeTab, setActiveTab] = useState('workspace'); // workspace, sandbox, analyst, swarm, marketplace
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Pricing & ROI Calculator state
+  const [billingCycle, setBillingCycle] = useState('monthly');
+  const [calcProblems, setCalcProblems] = useState(20);
 
   useEffect(() => {
     setIsSidebarOpen(false);
@@ -993,6 +1030,46 @@ export default function App() {
   const [cpuUsage, setCpuUsage] = useState(19);
   const [memoryUsage, setMemoryUsage] = useState(4.1);
 
+  // DYNAMIC PRICING CONFIGURATION STATE
+  const [pricingConfig, setPricingConfig] = useState(() => {
+    const saved = localStorage.getItem('aos_pricing_config');
+    return saved ? JSON.parse(saved) : {
+      monthlyDevSub: 19,
+      annualDevSub: 15,
+      monthlyProblemRate: 1.50,
+      annualProblemRate: 1.20,
+      traditionalHourCost: 75,
+      traditionalHoursPerProblem: 0.7
+    };
+  });
+
+  // DYNAMIC MODELS LIST STATE
+  const [availableModels, setAvailableModels] = useState(() => {
+    const saved = localStorage.getItem('aos_available_models');
+    return saved ? JSON.parse(saved) : [
+      { id: 'gemini-flash', name: 'Gemini 2.5 Flash', provider: 'gemini', status: 'Active' },
+      { id: 'gemini-pro', name: 'Gemini 1.5 Pro', provider: 'gemini', status: 'Active' },
+      { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai', status: 'Active' },
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai', status: 'Active' },
+      { id: 'llama3', name: 'Llama 3 (Local)', provider: 'ollama', status: 'Active' }
+    ];
+  });
+
+  const updatePricingConfig = (newConfig) => {
+    setPricingConfig(newConfig);
+    localStorage.setItem('aos_pricing_config', JSON.stringify(newConfig));
+  };
+
+  const updateAvailableModels = (newModels) => {
+    setAvailableModels(newModels);
+    localStorage.setItem('aos_available_models', JSON.stringify(newModels));
+  };
+
+  // ADMIN PANEL SUB-TAB STATE
+  const [adminSubTab, setAdminSubTab] = useState('customers');
+  const [newModelName, setNewModelName] = useState('');
+  const [newModelProvider, setNewModelProvider] = useState('gemini');
+
   // DATABASE / AUTHENTICATION INTEGRATION STATE
   const [currentUser, setCurrentUser] = useState(() => localStorage.getItem('aos_logged_in_user') || '');
   const [userDirectory, setUserDirectory] = useState([]);
@@ -1022,6 +1099,99 @@ export default function App() {
       window.useLocalDbFallback = true;
       setUserDirectory(localDbAPI.getUsers());
     }
+  };
+
+  const handleUpdateUserTier = async (username, tier) => {
+    if (!window.useLocalDbFallback) {
+      try {
+        const res = await fetch('/api/users/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, updates: { tier } })
+        });
+        if (res.ok) {
+          fetchUserDirectory();
+          return;
+        }
+      } catch (err) {
+        console.warn(err);
+      }
+    }
+    localDbAPI.updateUser(username, { tier });
+    fetchUserDirectory();
+  };
+
+  const handleUpdateUserBillingCycle = async (username, billingCycle) => {
+    if (!window.useLocalDbFallback) {
+      try {
+        const res = await fetch('/api/users/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, updates: { billingCycle } })
+        });
+        if (res.ok) {
+          fetchUserDirectory();
+          return;
+        }
+      } catch (err) {
+        console.warn(err);
+      }
+    }
+    localDbAPI.updateUser(username, { billingCycle });
+    fetchUserDirectory();
+  };
+
+  const handleUpdateUserProblems = async (username, problemsCount) => {
+    const val = parseInt(problemsCount);
+    if (isNaN(val)) return;
+    if (!window.useLocalDbFallback) {
+      try {
+        const res = await fetch('/api/users/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, updates: { problemsCount: val } })
+        });
+        if (res.ok) {
+          fetchUserDirectory();
+          return;
+        }
+      } catch (err) {
+        console.warn(err);
+      }
+    }
+    localDbAPI.updateUser(username, { problemsCount: val });
+    fetchUserDirectory();
+  };
+
+  const handleDeleteUser = async (username) => {
+    if (username.toLowerCase() === currentUser.toLowerCase()) {
+      alert("Cannot delete the currently active admin session!");
+      return;
+    }
+    if (!window.confirm(`Are you sure you want to delete user "${username}"? All chat and sandbox data will be purged.`)) {
+      return;
+    }
+    if (!window.useLocalDbFallback) {
+      try {
+        const res = await fetch(`/api/users/${username}`, {
+          method: 'DELETE'
+        });
+        if (res.ok) {
+          fetchUserDirectory();
+          return;
+        }
+      } catch (err) {
+        console.warn(err);
+      }
+    }
+    localDbAPI.deleteUser(username);
+    fetchUserDirectory();
+  };
+
+  const handleImpersonateUser = (username) => {
+    localStorage.setItem('aos_logged_in_user', username);
+    setCurrentUser(username);
+    setActiveTab('workspace');
   };
 
   // Fetch sandbox prompt logs from database
@@ -1097,6 +1267,27 @@ export default function App() {
            [{ sender: 'agent', text: 'SwarmCore is active. Input your swarm telemetry brief on the Swarm tab to trigger collaborative execution.', timestamp: '15:03' }];
   };
 
+  useEffect(() => {
+    const fetchPricingAndModels = async () => {
+      try {
+        const resPricing = await fetch('/api/pricing');
+        const pricingData = await resPricing.json();
+        if (pricingData && Object.keys(pricingData).length > 0) {
+          setPricingConfig(pricingData);
+        }
+
+        const resModels = await fetch('/api/models');
+        const modelsData = await resModels.json();
+        if (modelsData && modelsData.length > 0) {
+          setAvailableModels(modelsData);
+        }
+      } catch (err) {
+        console.error('Failed to fetch pricing or models config from server db:', err);
+      }
+    };
+    fetchPricingAndModels();
+  }, []);
+
   // Synchronization triggers
   useEffect(() => {
     if (currentUser) {
@@ -1109,6 +1300,7 @@ export default function App() {
       fetchSandboxHistory(currentUser);
       fetchUserDirectory();
       setUserDatasets(localDbAPI.getUserDatasets(currentUser));
+      setActiveTab('workspace');
     }
   }, [currentUser]);
 
@@ -1830,131 +2022,1300 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
     }, 11000);
   };
 
+  const renderPricingPage = (isInsideApp = false) => {
+    const isAnnual = billingCycle === 'annual';
+    const devMonthlyPrice = isAnnual ? pricingConfig.annualDevSub : pricingConfig.monthlyDevSub;
+    const problemCost = isAnnual ? pricingConfig.annualProblemRate : pricingConfig.monthlyProblemRate;
+    
+    const computedDevSub = devMonthlyPrice;
+    const computedProblemTotal = (calcProblems * problemCost).toFixed(2);
+    const traditionalDevCost = (calcProblems * (pricingConfig.traditionalHourCost * pricingConfig.traditionalHoursPerProblem)).toFixed(2);
+    const problemSavings = (parseFloat(traditionalDevCost) - parseFloat(computedProblemTotal)).toFixed(2);
+    const savingsPercent = Math.round(((parseFloat(traditionalDevCost) - parseFloat(computedProblemTotal)) / parseFloat(traditionalDevCost)) * 100);
+
+    return (
+      <div style={{ 
+        padding: isInsideApp ? '32px' : '60px 24px', 
+        maxWidth: '1100px', 
+        margin: '0 auto',
+        height: isInsideApp ? '100%' : 'auto',
+        overflowY: isInsideApp ? 'auto' : 'visible',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '40px'
+      }} className="animate-fade">
+        
+        {/* Pricing Header */}
+        <div style={{ textAlign: 'center' }}>
+          <h2 style={{ margin: '0 0 10px', fontSize: isInsideApp ? '24px' : '36px', fontWeight: '800' }} className="text-gradient">
+            Flexible Pricing for Autonomous AI Engineering
+          </h2>
+          <p style={{ margin: '0 0 24px', fontSize: '15px', color: 'var(--text-muted)' }}>
+            Choose the flat-rate workspace subscription or leverage our revolutionary pay-per-problem model.
+          </p>
+
+          {/* Billing Cycle Toggle */}
+          <div style={{ 
+            display: 'inline-flex', 
+            background: 'rgba(255, 255, 255, 0.03)', 
+            padding: '4px', 
+            borderRadius: '20px', 
+            border: '1px solid var(--border-color)',
+            marginBottom: '10px'
+          }}>
+            <button 
+              type="button"
+              onClick={() => setBillingCycle('monthly')}
+              style={{
+                background: billingCycle === 'monthly' ? 'var(--primary)' : 'transparent',
+                color: 'white',
+                border: 'none',
+                padding: '6px 16px',
+                borderRadius: '16px',
+                cursor: 'pointer',
+                fontWeight: '600',
+                fontSize: '13px',
+                transition: 'all 0.2s'
+              }}
+            >
+              Monthly Billing
+            </button>
+            <button 
+              type="button"
+              onClick={() => setBillingCycle('annual')}
+              style={{
+                background: billingCycle === 'annual' ? 'var(--primary)' : 'transparent',
+                color: 'white',
+                border: 'none',
+                padding: '6px 16px',
+                borderRadius: '16px',
+                cursor: 'pointer',
+                fontWeight: '600',
+                fontSize: '13px',
+                transition: 'all 0.2s',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}
+            >
+              Annual Billing <span style={{ fontSize: '10px', background: 'rgba(255,255,255,0.2)', padding: '2px 6px', borderRadius: '8px' }}>Save 20%</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Pricing Cards Grid */}
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', 
+          gap: '24px' 
+        }}>
+          
+          {/* Card 1: Free Sandbox */}
+          <div className="glow-card" style={{ padding: '30px', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+            <h3 style={{ margin: '0 0 4px', fontSize: '18px', color: 'white' }}>Sandbox Playground</h3>
+            <p style={{ margin: '0 0 20px', fontSize: '12px', color: 'var(--text-muted)' }}>Perfect for testing local templates and features.</p>
+            <div style={{ margin: '0 0 24px' }}>
+              <span style={{ fontSize: '36px', fontWeight: '800', color: 'white' }}>$0</span>
+              <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}> / forever</span>
+            </div>
+            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 30px 0', display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '13px' }}>
+              <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={14} color="var(--success)" /> Local interactive template apps</li>
+              <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={14} color="var(--success)" /> Standard user session & audit log</li>
+              <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={14} color="var(--success)" /> Single-agent local dialog history</li>
+              <li style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-dark)' }}><X size={14} color="var(--error)" /> No live LLM custom API connection</li>
+            </ul>
+            <button type="button" className="btn-secondary" style={{ marginTop: 'auto', width: '100%', justifyContent: 'center' }} disabled>
+              Current Default Tier
+            </button>
+          </div>
+
+          {/* Card 2: Developer Pro */}
+          <div className="glow-card glow-card-active" style={{ padding: '30px', display: 'flex', flexDirection: 'column', border: '1px solid var(--primary)', position: 'relative' }}>
+            <div style={{ 
+              position: 'absolute', 
+              top: '-12px', 
+              right: '24px', 
+              background: 'linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%)', 
+              color: 'white', 
+              fontSize: '10px', 
+              fontWeight: 'bold', 
+              padding: '4px 10px', 
+              borderRadius: '10px', 
+              boxShadow: '0 2px 10px rgba(139, 92, 246, 0.4)' 
+            }}>
+              POPULAR
+            </div>
+            <h3 style={{ margin: '0 0 4px', fontSize: '18px', color: 'white' }}>Developer Subscription</h3>
+            <p style={{ margin: '0 0 20px', fontSize: '12px', color: 'var(--text-muted)' }}>Best for power developers needing persistent API keys.</p>
+            <div style={{ margin: '0 0 24px' }}>
+              <span style={{ fontSize: '36px', fontWeight: '800', color: 'white' }}>${devMonthlyPrice}</span>
+              <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}> / month</span>
+            </div>
+            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 30px 0', display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '13px' }}>
+              <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={14} color="var(--success)" /> Live Gemini & OpenAI integration pipelines</li>
+              <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={14} color="var(--success)" /> Unlimited custom agent creations</li>
+              <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={14} color="var(--success)" /> Core sandbox editor & compilation outputs</li>
+              <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={14} color="var(--success)" /> Data Analyst & Excel imports upload tool</li>
+            </ul>
+            <button 
+              type="button"
+              className="btn-primary" 
+              style={{ marginTop: 'auto', width: '100%', justifyContent: 'center' }}
+              onClick={() => alert('Subscription initialized! (Demo sandbox mode)')}
+            >
+              Upgrade Workspace
+            </button>
+          </div>
+
+          {/* Card 3: Pay-Per-Problem */}
+          <div className="glow-card" style={{ padding: '30px', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+            <h3 style={{ margin: '0 0 4px', fontSize: '18px', color: 'white', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              Pay-Per-Problem <Zap size={16} color="var(--secondary)" fill="var(--secondary)" />
+            </h3>
+            <p style={{ margin: '0 0 20px', fontSize: '12px', color: 'var(--text-muted)' }}>Revolutionary on-demand plan for bug-fixing.</p>
+            <div style={{ margin: '0 0 24px' }}>
+              <span style={{ fontSize: '36px', fontWeight: '800', color: 'white' }}>${problemCost.toFixed(2)}</span>
+              <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}> / solved task</span>
+            </div>
+            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 30px 0', display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '13px' }}>
+              <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={14} color="var(--success)" /> Pay ONLY when sandboxed compilation succeeds</li>
+              <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={14} color="var(--success)" /> Free auto-rollback and testing retry operations</li>
+              <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={14} color="var(--success)" /> Unlimited debugging logs & agent execution duration</li>
+              <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Check size={14} color="var(--success)" /> Full Swarm coordinator task delegations</li>
+            </ul>
+            <button 
+              type="button"
+              className="btn-primary" 
+              style={{ 
+                marginTop: 'auto', 
+                width: '100%', 
+                justifyContent: 'center',
+                background: 'linear-gradient(135deg, var(--secondary) 0%, #0891b2 100%)',
+                boxShadow: '0 4px 12px rgba(6, 182, 212, 0.3)'
+              }}
+              onClick={() => alert('Pay-Per-Problem active billing linked! (Demo sandbox mode)')}
+            >
+              Activate Pay-Per-Problem
+            </button>
+          </div>
+        </div>
+
+        {/* Savings Calculator Card */}
+        <div className="glow-card" style={{ padding: '30px', background: 'rgba(20, 24, 38, 0.4)' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '30px', alignItems: 'center' }}>
+            <div style={{ flex: '1 1 350px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                <Sparkles size={18} color="var(--secondary)" />
+                <h4 style={{ margin: 0, fontSize: '18px', fontWeight: 'bold' }}>Pay-Per-Problem ROI Estimator</h4>
+              </div>
+              <p style={{ margin: '0 0 20px', fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+                Traditional engineering tasks can take hours and cost hundreds of dollars. Toggle the slider to see how much you save using Devon-X's autonomous, outcome-based problem pricing model.
+              </p>
+
+              <div style={{ marginBottom: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px', fontWeight: '600' }}>
+                  <span>Problems/Bugs solved per month:</span>
+                  <span style={{ color: 'var(--secondary)', fontFamily: 'var(--font-mono)', fontSize: '15px' }}>{calcProblems} tasks</span>
+                </div>
+                <input 
+                  type="range" 
+                  min="1" 
+                  max="100" 
+                  value={calcProblems} 
+                  onChange={(e) => setCalcProblems(parseInt(e.target.value))}
+                  style={{ 
+                    width: '100%', 
+                    accentColor: 'var(--secondary)',
+                    background: 'rgba(255,255,255,0.1)',
+                    height: '6px',
+                    borderRadius: '3px',
+                    outline: 'none',
+                    cursor: 'pointer'
+                  }}
+                />
+              </div>
+            </div>
+
+            <div style={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: '16px', borderLeft: '1px solid var(--border-color)', paddingLeft: '24px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '8px', fontSize: '13px' }}>
+                <span style={{ color: 'var(--text-muted)' }}>Flat Subscription Plan:</span>
+                <span style={{ fontWeight: 'bold', textAlign: 'right' }}>${computedDevSub} / mo</span>
+
+                <span style={{ color: 'var(--text-muted)' }}>On-Demand Problems cost:</span>
+                <span style={{ fontWeight: 'bold', color: 'var(--secondary)', textAlign: 'right' }}>${computedProblemTotal} / mo</span>
+
+                <span style={{ color: 'var(--text-muted)' }}>Traditional Human Dev cost:</span>
+                <span style={{ textDecoration: 'line-through', textAlign: 'right' }}>${traditionalDevCost} / mo</span>
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <span style={{ fontSize: '14px', fontWeight: 'bold' }}>Monthly Sandbox Savings:</span>
+                  <span style={{ fontSize: '24px', fontWeight: '800', color: 'var(--success)' }} className="text-gradient-pink">
+                    ${problemSavings}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Platform efficiency advantage:</span>
+                  <span style={{ fontSize: '12px', background: 'rgba(16,185,129,0.15)', color: 'var(--success)', padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>
+                    {savingsPercent}% Lower Cost
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderAdminPanel = () => {
+    // 1. Calculate active statistics
+    const totalUsers = userDirectory.length;
+    const totalLogins = userDirectory.reduce((sum, u) => sum + (u.login_count || 0), 0);
+    
+    // Revenue calculations using pricingConfig
+    const projectedRevenue = userDirectory.reduce((sum, u) => {
+      if (u.tier === 'developer') {
+        return sum + (u.billingCycle === 'annual' ? pricingConfig.annualDevSub : pricingConfig.monthlyDevSub);
+      } else if (u.tier === 'problem') {
+        const rate = u.billingCycle === 'annual' ? pricingConfig.annualProblemRate : pricingConfig.monthlyProblemRate;
+        return sum + (u.problemsCount || 0) * rate;
+      }
+      return sum;
+    }, 0);
+
+    const totalProblemsSolved = userDirectory.reduce((sum, u) => sum + (u.problemsCount || 0), 0);
+    
+    const tierCounts = userDirectory.reduce((acc, u) => {
+      acc[u.tier] = (acc[u.tier] || 0) + 1;
+      return acc;
+    }, { sandbox: 0, developer: 0, problem: 0 });
+
+    return (
+      <div style={{
+        padding: '24px',
+        height: '100%',
+        overflowY: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '24px',
+        animation: 'fadeIn 0.3s ease-out'
+      }}>
+        {/* Title */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: '22px', fontWeight: '800' }} className="text-gradient">
+              Platform Administration Console
+            </h2>
+            <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>
+              Monitor system state, billing revenues, and manage user directories.
+            </p>
+          </div>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            background: 'rgba(236, 72, 153, 0.1)',
+            color: 'var(--accent)',
+            padding: '6px 14px',
+            borderRadius: '20px',
+            fontSize: '12px',
+            fontWeight: 'bold',
+            border: '1px solid rgba(236, 72, 153, 0.2)'
+          }}>
+            <Shield size={12} /> Master Admin Session
+          </div>
+        </div>
+
+        {/* Stats Row */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: '20px'
+        }}>
+          <div className="glow-card" style={{ padding: '20px' }}>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Total Customers</span>
+            <div style={{ fontSize: '28px', fontWeight: '800', margin: '4px 0' }} className="text-gradient">
+              {totalUsers}
+            </div>
+            <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-dark)' }}>Registered system accounts</p>
+          </div>
+
+          <div className="glow-card" style={{ padding: '20px' }}>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Projected Monthly Revenue</span>
+            <div style={{ fontSize: '28px', fontWeight: '800', margin: '4px 0', color: 'var(--success)' }}>
+              ${projectedRevenue.toFixed(2)}
+            </div>
+            <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-dark)' }}>Active subscriptions + problems billing</p>
+          </div>
+
+          <div className="glow-card" style={{ padding: '20px' }}>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Problems Solved (All Time)</span>
+            <div style={{ fontSize: '28px', fontWeight: '800', margin: '4px 0', color: 'var(--secondary)' }}>
+              {totalProblemsSolved} tasks
+            </div>
+            <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-dark)' }}>Compiled unit test successes</p>
+          </div>
+
+          <div className="glow-card" style={{ padding: '20px' }}>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>User Audits Logins</span>
+            <div style={{ fontSize: '28px', fontWeight: '800', margin: '4px 0' }}>
+              {totalLogins}
+            </div>
+            <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-dark)' }}>Total dashboard visits logged</p>
+          </div>
+        </div>
+
+        {/* Admin Navigation Sub-tabs */}
+        <div style={{
+          display: 'flex',
+          borderBottom: '1px solid var(--border-color)',
+          gap: '24px',
+          paddingBottom: '2px',
+          marginBottom: '8px'
+        }}>
+          <button 
+            type="button"
+            onClick={() => setAdminSubTab('customers')} 
+            style={{
+              background: 'none',
+              border: 'none',
+              borderBottom: adminSubTab === 'customers' ? '2px solid var(--primary)' : '2px solid transparent',
+              color: adminSubTab === 'customers' ? 'white' : 'var(--text-muted)',
+              padding: '8px 4px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              fontSize: '13px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.2s'
+            }}
+          >
+            <User size={14} /> Customer Directory
+          </button>
+          <button 
+            type="button"
+            onClick={() => setAdminSubTab('pricing')} 
+            style={{
+              background: 'none',
+              border: 'none',
+              borderBottom: adminSubTab === 'pricing' ? '2px solid var(--primary)' : '2px solid transparent',
+              color: adminSubTab === 'pricing' ? 'white' : 'var(--text-muted)',
+              padding: '8px 4px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              fontSize: '13px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.2s'
+            }}
+          >
+            <Zap size={14} /> Pricing & Subscriptions
+          </button>
+          <button 
+            type="button"
+            onClick={() => setAdminSubTab('models')} 
+            style={{
+              background: 'none',
+              border: 'none',
+              borderBottom: adminSubTab === 'models' ? '2px solid var(--primary)' : '2px solid transparent',
+              color: adminSubTab === 'models' ? 'white' : 'var(--text-muted)',
+              padding: '8px 4px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              fontSize: '13px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.2s'
+            }}
+          >
+            <Cpu size={14} /> LLM Model Profiles
+          </button>
+        </div>
+
+        {/* SUB-TAB 1: CUSTOMERS */}
+        {adminSubTab === 'customers' && (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '2fr 1fr',
+            gap: '24px',
+            alignItems: 'start'
+          }} className="analyst-layout">
+            {/* Customer list card */}
+            <div className="glow-card" style={{ padding: '24px', minWidth: 0 }}>
+              <h3 style={{ margin: '0 0 16px', fontSize: '15px', color: 'white', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <User size={16} color="var(--primary)" /> Manage Platform Customers
+              </h3>
+              
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', textAlign: 'left' }}>
+                      <th style={{ padding: '10px 8px' }}>User Details</th>
+                      <th style={{ padding: '10px 8px' }}>Active Subscription Tier</th>
+                      <th style={{ padding: '10px 8px' }}>Billing Cycle</th>
+                      <th style={{ padding: '10px 8px', textAlign: 'center' }}>Tasks</th>
+                      <th style={{ padding: '10px 8px', textAlign: 'right' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {userDirectory.map((usr) => (
+                      <tr key={usr.username} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', verticalAlign: 'middle' }}>
+                        <td style={{ padding: '12px 8px' }}>
+                          <div style={{ fontWeight: 'bold', color: 'white' }}>{usr.username}</div>
+                          <div style={{ fontSize: '10px', color: 'var(--text-dark)' }}>Registered: {usr.registeredAt || 'Unknown'}</div>
+                          <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Logins: {usr.login_count || 1} • Last seen: {usr.last_login}</div>
+                        </td>
+                        <td style={{ padding: '12px 8px' }}>
+                          <select 
+                            value={usr.tier} 
+                            onChange={(e) => handleUpdateUserTier(usr.username, e.target.value)}
+                            className="input-field"
+                            style={{ padding: '4px 8px', fontSize: '11px', background: 'rgba(0,0,0,0.3)', width: '130px' }}
+                          >
+                            <option value="sandbox">Sandbox (Free)</option>
+                            <option value="developer">Developer Sub</option>
+                            <option value="problem">Pay-Per-Problem</option>
+                          </select>
+                        </td>
+                        <td style={{ padding: '12px 8px' }}>
+                          <select 
+                            value={usr.billingCycle} 
+                            onChange={(e) => handleUpdateUserBillingCycle(usr.username, e.target.value)}
+                            className="input-field"
+                            style={{ padding: '4px 8px', fontSize: '11px', background: 'rgba(0,0,0,0.3)', width: '100px' }}
+                          >
+                            <option value="monthly">Monthly</option>
+                            <option value="annual">Annual (-20%)</option>
+                          </select>
+                        </td>
+                        <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                          <input 
+                            type="number"
+                            value={usr.problemsCount || 0}
+                            onChange={(e) => handleUpdateUserProblems(usr.username, e.target.value)}
+                            className="input-field"
+                            style={{ 
+                              padding: '4px', 
+                              fontSize: '11px', 
+                              background: 'rgba(0,0,0,0.3)', 
+                              width: '50px', 
+                              textAlign: 'center',
+                              fontFamily: 'var(--font-mono)'
+                            }}
+                            min="0"
+                            max="999"
+                          />
+                        </td>
+                        <td style={{ padding: '12px 8px', textAlign: 'right' }}>
+                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                            <button 
+                              type="button"
+                              onClick={() => handleImpersonateUser(usr.username)}
+                              className="btn-secondary"
+                              style={{ padding: '4px 8px', fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+                              title="Impersonate user session"
+                            >
+                              <Compass size={10} /> Switch
+                            </button>
+                            <button 
+                              type="button"
+                              onClick={() => handleDeleteUser(usr.username)}
+                              className="btn-secondary"
+                              style={{ 
+                                padding: '4px 8px', 
+                                fontSize: '10px', 
+                                color: 'var(--error)', 
+                                borderColor: 'rgba(239, 68, 68, 0.2)' 
+                              }}
+                              title="Purge user account"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {userDirectory.length === 0 && (
+                      <tr>
+                        <td colSpan="5" style={{ padding: '30px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                          No customers recorded in database.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Right Master Controls */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <div className="glow-card" style={{ padding: '20px' }}>
+                <h3 style={{ margin: '0 0 16px', fontSize: '14px', color: 'white', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Cpu size={15} color="var(--secondary)" /> Sandbox Resource Controls
+                </h3>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Active Containers:</span>
+                    <span style={{ fontWeight: 'bold', fontFamily: 'var(--font-mono)' }}>{totalUsers * 2} VM instances</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Engine Allocation:</span>
+                    <span style={{ color: 'var(--success)', fontWeight: 'bold' }}>Optimal (1.2 Gb/VM)</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Total Subscriptions:</span>
+                    <span style={{ color: 'var(--primary)', fontWeight: 'bold' }}>{tierCounts.developer} dev accounts</span>
+                  </div>
+                  
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      alert("Rebuilding active sandbox instances... All container caches purged successfully!");
+                    }}
+                    className="btn-secondary" 
+                    style={{ width: '100%', padding: '10px', fontSize: '11px', marginTop: '8px' }}
+                  >
+                    Purge & Rebuild Sandbox Engines
+                  </button>
+                </div>
+              </div>
+
+              <div className="glow-card" style={{ padding: '20px' }}>
+                <h3 style={{ margin: '0 0 16px', fontSize: '14px', color: 'white', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <RefreshCw size={15} color="var(--success)" /> Master Swarm Actions
+                </h3>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Swarm Plan status:</span>
+                    <span style={{ color: isSwarmRunning ? 'var(--success)' : 'var(--text-muted)', fontWeight: 'bold' }}>
+                      {isSwarmRunning ? 'ACTIVE FLOWS' : 'STANDBY'}
+                    </span>
+                  </div>
+                  
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      if (isSwarmRunning) {
+                        setIsSwarmRunning(false);
+                        setSwarmStep(0);
+                        setSwarmLogs(['[Master Admin Override] All active swarm coordinator workflows killed.']);
+                        alert("Global Swarm executors terminated.");
+                      } else {
+                        alert("No active swarm instances running globally.");
+                      }
+                    }}
+                    className="btn-secondary" 
+                    style={{ 
+                      width: '100%', 
+                      padding: '10px', 
+                      fontSize: '11px', 
+                      color: 'var(--error)', 
+                      borderColor: 'rgba(239, 68, 68, 0.2)' 
+                    }}
+                  >
+                    Kill All Active Swarms
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* SUB-TAB 2: PRICING CONFIG */}
+        {adminSubTab === 'pricing' && (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: '24px',
+            alignItems: 'start'
+          }} className="analyst-layout animate-fade">
+            {/* Rates Modifier */}
+            <div className="glow-card" style={{ padding: '24px' }}>
+              <h3 style={{ margin: '0 0 20px', fontSize: '15px', color: 'white', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Zap size={16} color="var(--primary)" /> Billing Rate Modifiers
+              </h3>
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                const updated = {
+                  monthlyDevSub: parseFloat(e.target.monthlyDevSub.value),
+                  annualDevSub: parseFloat(e.target.annualDevSub.value),
+                  monthlyProblemRate: parseFloat(e.target.monthlyProblemRate.value),
+                  annualProblemRate: parseFloat(e.target.annualProblemRate.value),
+                  traditionalHourCost: parseFloat(e.target.traditionalHourCost.value),
+                  traditionalHoursPerProblem: parseFloat(e.target.traditionalHoursPerProblem.value)
+                };
+                updatePricingConfig(updated);
+                alert("Platform pricing configurations updated and published successfully!");
+              }} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                      Developer Monthly Sub ($)
+                    </label>
+                    <input 
+                      type="number" 
+                      name="monthlyDevSub" 
+                      defaultValue={pricingConfig.monthlyDevSub} 
+                      step="0.01"
+                      className="input-field" 
+                      style={{ width: '100%' }} 
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                      Developer Annual Sub ($)
+                    </label>
+                    <input 
+                      type="number" 
+                      name="annualDevSub" 
+                      defaultValue={pricingConfig.annualDevSub} 
+                      step="0.01"
+                      className="input-field" 
+                      style={{ width: '100%' }} 
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                      Pay-Per-Problem Monthly ($/Task)
+                    </label>
+                    <input 
+                      type="number" 
+                      name="monthlyProblemRate" 
+                      defaultValue={pricingConfig.monthlyProblemRate} 
+                      step="0.01"
+                      className="input-field" 
+                      style={{ width: '100%' }} 
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                      Pay-Per-Problem Annual ($/Task)
+                    </label>
+                    <input 
+                      type="number" 
+                      name="annualProblemRate" 
+                      defaultValue={pricingConfig.annualProblemRate} 
+                      step="0.01"
+                      className="input-field" 
+                      style={{ width: '100%' }} 
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                      Traditional Dev Rate ($/Hr)
+                    </label>
+                    <input 
+                      type="number" 
+                      name="traditionalHourCost" 
+                      defaultValue={pricingConfig.traditionalHourCost} 
+                      step="0.5"
+                      className="input-field" 
+                      style={{ width: '100%' }} 
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                      Traditional Hours Per Problem
+                    </label>
+                    <input 
+                      type="number" 
+                      name="traditionalHoursPerProblem" 
+                      defaultValue={pricingConfig.traditionalHoursPerProblem} 
+                      step="0.01"
+                      className="input-field" 
+                      style={{ width: '100%' }} 
+                    />
+                  </div>
+                </div>
+
+                <button type="submit" className="btn-primary" style={{ marginTop: '10px', justifyContent: 'center' }}>
+                  Save & Publish Rates
+                </button>
+              </form>
+            </div>
+
+            {/* Live Estimator Preview Card */}
+            <div className="glow-card" style={{ padding: '24px' }}>
+              <h3 style={{ margin: '0 0 16px', fontSize: '15px', color: 'white' }}>
+                Live Subscription Estimator Sandbox
+              </h3>
+              <p style={{ margin: '0 0 20px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                This is a real-time preview of how users will see the ROI Estimator calculations based on current admin settings.
+              </p>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>10 Problems Solved (Monthly rate):</span>
+                  <span style={{ fontWeight: 'bold', color: 'white' }}>${(10 * pricingConfig.monthlyProblemRate).toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>10 Problems Solved (Annual rate):</span>
+                  <span style={{ fontWeight: 'bold', color: 'white' }}>${(10 * pricingConfig.annualProblemRate).toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Traditional Human cost (10 tasks):</span>
+                  <span style={{ fontWeight: 'bold', color: 'var(--error)' }}>
+                    ${(10 * pricingConfig.traditionalHourCost * pricingConfig.traditionalHoursPerProblem).toFixed(2)}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', borderTop: '1px dashed var(--border-color)', paddingTop: '10px' }}>
+                  <span style={{ color: 'white', fontWeight: 'bold' }}>Monthly Savings using AosAI:</span>
+                  <span style={{ fontWeight: 'bold', color: 'var(--success)' }}>
+                    +${((10 * pricingConfig.traditionalHourCost * pricingConfig.traditionalHoursPerProblem) - (10 * pricingConfig.monthlyProblemRate)).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* SUB-TAB 3: MODELS CONFIG */}
+        {adminSubTab === 'models' && (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '2fr 1.2fr',
+            gap: '24px',
+            alignItems: 'start'
+          }} className="analyst-layout animate-fade">
+            {/* Models Table */}
+            <div className="glow-card" style={{ padding: '24px' }}>
+              <h3 style={{ margin: '0 0 16px', fontSize: '15px', color: 'white', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Cpu size={16} color="var(--primary)" /> Configured LLM Models directory
+              </h3>
+              
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', textAlign: 'left' }}>
+                      <th style={{ padding: '10px 8px' }}>Model Name</th>
+                      <th style={{ padding: '10px 8px' }}>Provider</th>
+                      <th style={{ padding: '10px 8px', textAlign: 'center' }}>Status</th>
+                      <th style={{ padding: '10px 8px', textAlign: 'right' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {availableModels.map((model) => (
+                      <tr key={model.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', verticalAlign: 'middle' }}>
+                        <td style={{ padding: '12px 8px', fontWeight: 'bold', color: 'white' }}>
+                          {model.name}
+                        </td>
+                        <td style={{ padding: '12px 8px', textTransform: 'capitalize' }}>
+                          {model.provider}
+                        </td>
+                        <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = availableModels.map(m => m.id === model.id ? { ...m, status: m.status === 'Active' ? 'Inactive' : 'Active' } : m);
+                              updateAvailableModels(updated);
+                            }}
+                            className={model.status === 'Active' ? 'btn-primary' : 'btn-secondary'}
+                            style={{ padding: '2px 8px', fontSize: '10px', display: 'inline-flex', alignItems: 'center', minWidth: '65px', justifyContent: 'center' }}
+                          >
+                            {model.status}
+                          </button>
+                        </td>
+                        <td style={{ padding: '12px 8px', textAlign: 'right' }}>
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              const updated = availableModels.filter(m => m.id !== model.id);
+                              updateAvailableModels(updated);
+                            }}
+                            className="btn-secondary"
+                            style={{ padding: '4px 8px', fontSize: '10px', color: 'var(--error)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Add Model Panel */}
+            <div className="glow-card" style={{ padding: '24px' }}>
+              <h3 style={{ margin: '0 0 16px', fontSize: '15px', color: 'white' }}>
+                Register New LLM Profile
+              </h3>
+              
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                if (!newModelName.trim()) {
+                  alert("Please supply a valid Model Name.");
+                  return;
+                }
+                const newModel = {
+                  id: newModelName.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+                  name: newModelName.trim(),
+                  provider: newModelProvider,
+                  status: 'Active'
+                };
+                
+                // Avoid duplicates
+                if (availableModels.some(m => m.id === newModel.id)) {
+                  alert("A model with this profile identity already exists.");
+                  return;
+                }
+
+                updateAvailableModels([...availableModels, newModel]);
+                setNewModelName('');
+                alert("New LLM model successfully registered system-wide!");
+              }} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                    Model Identifier Name
+                  </label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. Gemini 2.0 Pro Experimental"
+                    value={newModelName}
+                    onChange={(e) => setNewModelName(e.target.value)}
+                    className="input-field" 
+                    style={{ width: '100%' }} 
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                    LLM Engine Provider
+                  </label>
+                  <select 
+                    value={newModelProvider}
+                    onChange={(e) => setNewModelProvider(e.target.value)}
+                    className="input-field" 
+                    style={{ width: '100%', padding: '10px' }}
+                  >
+                    <option value="gemini">Google Gemini AI</option>
+                    <option value="openai">OpenAI GPT-4 / o1</option>
+                    <option value="anthropic">Anthropic Claude</option>
+                    <option value="ollama">Ollama (Local Host)</option>
+                  </select>
+                </div>
+
+                <button type="submit" className="btn-primary" style={{ marginTop: '10px', justifyContent: 'center' }}>
+                  Register Model Profile
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   if (!currentUser) {
     return (
       <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
         width: '100vw',
         height: '100vh',
         background: 'var(--bg-main)',
         position: 'relative',
-        overflow: 'hidden'
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        scrollBehavior: 'smooth'
       }}>
+        {/* Antigravity floating particles background overlay */}
+        <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 1 }}>
+          {[...Array(15)].map((_, i) => {
+            const size = Math.random() * 90 + 30;
+            const delay = Math.random() * -30;
+            const duration = Math.random() * 20 + 15;
+            const left = Math.random() * 100;
+            const driftX = Math.random() * 120 - 60;
+            return (
+              <div 
+                key={i} 
+                className="antigravity-particle"
+                style={{
+                  left: `${left}%`,
+                  width: `${size}px`,
+                  height: `${size}px`,
+                  animation: `antigravity-rise ${duration}s linear infinite`,
+                  animationDelay: `${delay}s`,
+                  '--drift-x': `${driftX}px`
+                }} 
+              />
+            );
+          })}
+        </div>
+
         {/* Decorative Grid and Ambient Lights */}
         <div style={{
           position: 'absolute',
-          inset: 0,
-          backgroundImage: 'radial-gradient(at 50% 50%, rgba(139, 92, 246, 0.12) 0px, transparent 50%)',
-          pointerEvents: 'none'
+          top: 0,
+          left: 0,
+          right: 0,
+          height: '1000px',
+          backgroundImage: 'radial-gradient(at 50% 30%, rgba(139, 92, 246, 0.12) 0px, transparent 60%)',
+          pointerEvents: 'none',
+          zIndex: 0
         }} />
-        
-        <form 
-          onSubmit={async (e) => {
-            e.preventDefault();
-            const usernameInput = e.target.username.value;
-            const passwordInput = e.target.password.value;
-            if (!usernameInput || !passwordInput) return;
 
-            // 1. Attempt backend server login first
-            if (!window.useLocalDbFallback) {
-              try {
-                const res = await fetch('/api/login', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ username: usernameInput, password: passwordInput })
-                });
-                const contentType = res.headers.get('content-type');
-                if (res.ok && contentType && contentType.includes('application/json')) {
-                  const data = await res.json();
-                  if (data.success) {
-                    localStorage.setItem('aos_logged_in_user', data.username);
-                    setCurrentUser(data.username);
-                    return;
-                  } else {
-                    alert(data.error || 'Login failed');
-                    return;
-                  }
-                } else {
-                  console.warn('API returned non-JSON response. Switching to local storage DB emulator.');
-                  window.useLocalDbFallback = true;
-                }
-              } catch (err) {
-                console.warn('Network error, switching to local storage DB emulator.', err);
-                window.useLocalDbFallback = true;
-              }
-            }
+        {/* Global Nav Bar */}
+        <header className="header-glow-border" style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '20px 40px',
+          background: 'rgba(14, 17, 26, 0.8)',
+          backdropFilter: 'blur(10px)',
+          position: 'sticky',
+          top: 0,
+          zIndex: 50
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }} className="antigravity-float">
+            <img
+              src="/aosai-logo.png"
+              alt="AosAI Logo"
+              style={{
+                width: '38px',
+                height: '38px',
+                borderRadius: '9px',
+                objectFit: 'cover',
+                boxShadow: '0 0 14px rgba(139,92,246,0.5)'
+              }}
+            />
+            <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '800' }} className="text-gradient">AosAI Agent Hub</h1>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '24px', fontSize: '14px' }}>
+            <a href="#features-showcase" className="header-link" onClick={(e) => { e.preventDefault(); document.getElementById('features-showcase')?.scrollIntoView({ behavior: 'smooth' }); }}>Features</a>
+            <a href="#system-workflow" className="header-link" onClick={(e) => { e.preventDefault(); document.getElementById('system-workflow')?.scrollIntoView({ behavior: 'smooth' }); }}>Workflow</a>
+            <a href="#pricing-section" className="header-link" onClick={(e) => { e.preventDefault(); document.getElementById('pricing-section')?.scrollIntoView({ behavior: 'smooth' }); }}>Pricing</a>
+            <a href="#login-box" className="btn-cyber-header" onClick={(e) => { e.preventDefault(); document.getElementById('login-box')?.scrollIntoView({ behavior: 'smooth' }); }}>Sign In</a>
+          </div>
+        </header>
 
-            // 2. Client-side local DB fallback
-            const res = localDbAPI.login(usernameInput, passwordInput);
-            if (res.success) {
-              localStorage.setItem('aos_logged_in_user', res.username);
-              setCurrentUser(res.username);
-            } else {
-              alert(res.error || 'Login failed');
-            }
-          }}
-          className="glow-card" 
-          style={{ 
-            padding: '40px', 
-            width: '90%', 
-            maxWidth: '420px', 
-            display: 'flex', 
-            flexDirection: 'column', 
-            gap: '20px',
-            background: 'var(--bg-sidebar)',
-            border: '1px solid rgba(139, 92, 246, 0.2)',
-            zIndex: 10
-          }}
-        >
-          <div style={{ textAlign: 'center', marginBottom: '10px' }}>
-            <div style={{
-              background: 'linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%)',
-              width: '48px',
-              height: '48px',
-              borderRadius: '12px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 0 20px var(--primary-glow)',
-              marginBottom: '16px'
+        {/* Hero Section */}
+        <div style={{
+          maxWidth: '1200px',
+          margin: '0 auto',
+          padding: '80px 24px',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+          gap: '60px',
+          alignItems: 'center',
+          position: 'relative',
+          zIndex: 10
+        }}>
+          {/* Hero text */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }} className="antigravity-float">
+            <div style={{ 
+              display: 'inline-flex', 
+              alignItems: 'center', 
+              gap: '6px', 
+              background: 'rgba(139, 92, 246, 0.1)', 
+              color: 'var(--primary)', 
+              padding: '6px 14px', 
+              borderRadius: '20px', 
+              fontSize: '12px', 
+              fontWeight: 'bold', 
+              border: '1px solid rgba(139, 92, 246, 0.2)',
+              width: 'fit-content'
             }}>
-              <Layers size={24} color="white" />
+              <Sparkles size={12} /> Next-Gen AI Agent Platform
             </div>
-            <h1 style={{ margin: 0, fontSize: '24px', fontWeight: '800' }} className="text-gradient">AosAI Agent Hub</h1>
-            <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>Secure Developer & SWARM Gateway</p>
+            <h2 style={{ fontSize: '46px', fontWeight: '800', lineHeight: '1.2', margin: 0 }} className="text-gradient">
+              Orchestrate Autonomous Multi-Agent Workflows
+            </h2>
+            <p style={{ fontSize: '16px', color: 'var(--text-muted)', lineHeight: '1.6', margin: 0 }}>
+              Connect Devon-X, AlphaCap, and Swarm Core agents to compile sandbox environments, execute quantitative trend data, and coordinate multi-specialist tasks seamlessly.
+            </p>
+            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '10px' }}>
+              <div className="glow-card" style={{ padding: '16px', flex: '1 1 180px', background: 'rgba(255,255,255,0.01)' }}>
+                <h4 style={{ margin: '0 0 4px 0', fontSize: '14px', color: 'white', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Code size={14} color="var(--primary)" /> Devon-X Coder
+                </h4>
+                <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-muted)' }}>Autonomous sandbox software execution engine.</p>
+              </div>
+              <div className="glow-card" style={{ padding: '16px', flex: '1 1 180px', background: 'rgba(255,255,255,0.01)' }}>
+                <h4 style={{ margin: '0 0 4px 0', fontSize: '14px', color: 'white', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <RefreshCw size={14} color="var(--secondary)" /> SwarmCore Manager
+                </h4>
+                <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-muted)' }}>Multi-agent coordinator & task delegation sequence.</p>
+              </div>
+            </div>
           </div>
 
-          <div>
-            <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>USER IDENTIFIER</label>
-            <input 
-              name="username"
-              type="text" 
-              placeholder="Enter username"
-              className="input-field"
-              style={{ width: '100%' }}
-              required
-            />
+          {/* Login box */}
+          <div id="login-box" style={{ display: 'flex', justifyContent: 'center' }} className="antigravity-float">
+            <form 
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const usernameInput = e.target.username.value;
+                const passwordInput = e.target.password.value;
+                if (!usernameInput || !passwordInput) return;
+
+                // 1. Attempt backend server login first
+                if (!window.useLocalDbFallback) {
+                  try {
+                    const res = await fetch('/api/login', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ username: usernameInput, password: passwordInput })
+                    });
+                    const contentType = res.headers.get('content-type');
+                    if (res.ok && contentType && contentType.includes('application/json')) {
+                      const data = await res.json();
+                      if (data.success) {
+                        localStorage.setItem('aos_logged_in_user', data.username);
+                        setCurrentUser(data.username);
+                        return;
+                      } else {
+                        alert(data.error || 'Login failed');
+                        return;
+                      }
+                    } else {
+                      console.warn('API returned non-JSON response. Switching to local storage DB emulator.');
+                      window.useLocalDbFallback = true;
+                    }
+                  } catch (err) {
+                    console.warn('Network error, switching to local storage DB emulator.', err);
+                    window.useLocalDbFallback = true;
+                  }
+                }
+
+                // 2. Client-side local DB fallback
+                const res = localDbAPI.login(usernameInput, passwordInput);
+                if (res.success) {
+                  localStorage.setItem('aos_logged_in_user', res.username);
+                  setCurrentUser(res.username);
+                } else {
+                  alert(res.error || 'Login failed');
+                }
+              }}
+              className="glow-card" 
+              style={{ 
+                padding: '40px', 
+                width: '100%', 
+                maxWidth: '420px', 
+                display: 'flex', 
+                flexDirection: 'column', 
+                gap: '20px',
+                background: 'var(--bg-sidebar)',
+                border: '1px solid rgba(139, 92, 246, 0.2)',
+                boxShadow: 'var(--shadow-lg)'
+              }}
+            >
+              <div style={{ textAlign: 'center', marginBottom: '10px' }}>
+                <img
+                  src="/aosai-logo.png"
+                  alt="AosAI"
+                  style={{
+                    width: '64px',
+                    height: '64px',
+                    borderRadius: '14px',
+                    objectFit: 'cover',
+                    boxShadow: '0 0 24px rgba(139,92,246,0.5)',
+                    marginBottom: '14px'
+                  }}
+                />
+                <h3 style={{ margin: 0, fontSize: '20px', fontWeight: '800' }} className="text-gradient">Access Agent Workspace</h3>
+                <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>Secure Developer & SWARM Gateway</p>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>USER IDENTIFIER</label>
+                <input 
+                  name="username"
+                  type="text" 
+                  placeholder="Enter username"
+                  className="input-field"
+                  style={{ width: '100%' }}
+                  required
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>ACCESS PASSCODE</label>
+                <input 
+                  name="password"
+                  type="password" 
+                  placeholder="Enter password"
+                  className="input-field"
+                  style={{ width: '100%' }}
+                  required
+                />
+                <p style={{ margin: '6px 0 0', fontSize: '10px', color: 'var(--text-dark)' }}>* New users will be auto-registered with the password supplied.</p>
+              </div>
+
+              <button type="submit" className="btn-cyber-submit" style={{ width: '100%', justifyContent: 'center', padding: '12px', marginTop: '10px' }}>
+                <Zap size={16} fill="white" /> Access Agent Workspace
+              </button>
+            </form>
+          </div>
+        </div>
+
+        {/* Features Showcase Section */}
+        <section id="features-showcase" style={{
+          padding: '80px 24px',
+          maxWidth: '1200px',
+          margin: '0 auto',
+          position: 'relative',
+          zIndex: 10,
+          borderTop: '1px solid var(--border-color)'
+        }}>
+          <div style={{ textAlign: 'center', marginBottom: '50px' }}>
+            <h2 className="text-gradient" style={{ fontSize: '32px', fontWeight: '800', margin: '0 0 12px 0' }}>Comprehensive Multi-Agent Suite</h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '15px', maxWidth: '600px', margin: '0 auto' }}>
+              Explore the advanced suite of autonomous modules integrated right out of the box to power your development, analysis, and execution tasks.
+            </p>
           </div>
 
-          <div>
-            <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>ACCESS PASSCODE</label>
-            <input 
-              name="password"
-              type="password" 
-              placeholder="Enter password"
-              className="input-field"
-              style={{ width: '100%' }}
-              required
-            />
-            <p style={{ margin: '6px 0 0', fontSize: '10px', color: 'var(--text-dark)' }}>* New users will be auto-registered with the password supplied.</p>
-          </div>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+            gap: '24px'
+          }}>
+            <div className="glow-card" style={{ padding: '30px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ background: 'rgba(139,92,246,0.1)', width: '40px', height: '40px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Bot size={18} color="var(--primary)" />
+              </div>
+              <h3 style={{ margin: '8px 0 0 0', fontSize: '18px', color: 'white' }}>1. Agent Workspace</h3>
+              <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+                Live dialog with customizable AI agents. Configure LLM providers, model properties, system parameters, and track real-time agent output tokens.
+              </p>
+            </div>
 
-          <button type="submit" className="btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '12px', marginTop: '10px' }}>
-            <Zap size={16} fill="white" /> Access Agent Workspace
-          </button>
-        </form>
+            <div className="glow-card" style={{ padding: '30px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ background: 'rgba(6,182,212,0.1)', width: '40px', height: '40px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Code size={18} color="var(--secondary)" />
+              </div>
+              <h3 style={{ margin: '8px 0 0 0', fontSize: '18px', color: 'white' }}>2. Coding Sandbox</h3>
+              <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+                Full interactive browser compilation playground. Create/edit file trees, run unit tests, compile local app templates, and view terminal logs.
+              </p>
+            </div>
+
+            <div className="glow-card" style={{ padding: '30px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ background: 'rgba(236,72,153,0.1)', width: '40px', height: '40px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <LineChart size={18} color="var(--accent)" />
+              </div>
+              <h3 style={{ margin: '8px 0 0 0', fontSize: '18px', color: 'white' }}>3. Data Analytics</h3>
+              <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+                Upload datasets (CSV, Excel), view tabular records, persistence directories, and rendering comparative charts (Line, Bar, Doughnut).
+              </p>
+            </div>
+
+            <div className="glow-card" style={{ padding: '30px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ background: 'rgba(16,185,129,0.1)', width: '40px', height: '40px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <RefreshCw size={18} color="var(--success)" />
+              </div>
+              <h3 style={{ margin: '8px 0 0 0', fontSize: '18px', color: 'white' }}>4. Agent Swarm</h3>
+              <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+                Visual multi-agent delegation sequence. Run Orchestrator, DevOps, Planner, Coder, and Reviewer loops in synchrony with live console pulses.
+              </p>
+            </div>
+
+            <div className="glow-card" style={{ padding: '30px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ background: 'rgba(245,158,11,0.1)', width: '40px', height: '40px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Key size={18} color="var(--warning)" />
+              </div>
+              <h3 style={{ margin: '8px 0 0 0', fontSize: '18px', color: 'white' }}>5. LLM Credentials Portal</h3>
+              <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+                Secure localized client database to input, test, and save provider API keys for live model execution pipelines (Gemini/OpenAI).
+              </p>
+            </div>
+
+            <div className="glow-card" style={{ padding: '30px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ background: 'rgba(239,68,68,0.1)', width: '40px', height: '40px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <User size={18} color="var(--error)" />
+              </div>
+              <h3 style={{ margin: '8px 0 0 0', fontSize: '18px', color: 'white' }}>6. Session Audit Logs</h3>
+              <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+                Persistent authorization logs tracking session start times, login counts, and user directories synced to local Express database.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* System Workflow Section */}
+        <section id="system-workflow" style={{
+          padding: '80px 24px',
+          background: 'rgba(14, 17, 26, 0.4)',
+          position: 'relative',
+          zIndex: 10,
+          borderTop: '1px solid var(--border-color)'
+        }}>
+          <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+            <div style={{ textAlign: 'center', marginBottom: '50px' }}>
+              <h2 className="text-gradient" style={{ fontSize: '32px', fontWeight: '800', margin: '0 0 12px 0' }}>How AosAI Coordinates Work</h2>
+              <p style={{ color: 'var(--text-muted)', fontSize: '15px', maxWidth: '600px', margin: '0 auto' }}>
+                From credential linking to sandbox code compiler execution, here is how the agent ecosystem synchronizes tasks.
+              </p>
+            </div>
+
+            <div style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '24px',
+              justifyContent: 'center'
+            }}>
+              <div className="glow-card" style={{ padding: '24px', flex: '1 1 250px', maxWidth: '280px', textAlign: 'center', position: 'relative' }}>
+                <div style={{ fontSize: '24px', fontWeight: '800', color: 'var(--primary)', marginBottom: '12px' }}>01</div>
+                <h4 style={{ margin: '0 0 8px 0', fontSize: '15px', color: 'white' }}>Link Credentials</h4>
+                <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>Input OpenAI/Gemini API keys locally or use default fallback simulator templates.</p>
+              </div>
+
+              <div className="glow-card" style={{ padding: '24px', flex: '1 1 250px', maxWidth: '280px', textAlign: 'center', position: 'relative' }}>
+                <div style={{ fontSize: '24px', fontWeight: '800', color: 'var(--secondary)', marginBottom: '12px' }}>02</div>
+                <h4 style={{ margin: '0 0 8px 0', fontSize: '15px', color: 'white' }}>Select Agent Core</h4>
+                <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>Configure Devon-X, Analyst, or Swarm model settings to define task targets.</p>
+              </div>
+
+              <div className="glow-card" style={{ padding: '24px', flex: '1 1 250px', maxWidth: '280px', textAlign: 'center', position: 'relative' }}>
+                <div style={{ fontSize: '24px', fontWeight: '800', color: 'var(--accent)', marginBottom: '12px' }}>03</div>
+                <h4 style={{ margin: '0 0 8px 0', fontSize: '15px', color: 'white' }}>Sandbox Compile</h4>
+                <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>Run agent operations inside the safe sandbox virtual file editor tree environment.</p>
+              </div>
+
+              <div className="glow-card" style={{ padding: '24px', flex: '1 1 250px', maxWidth: '280px', textAlign: 'center', position: 'relative' }}>
+                <div style={{ fontSize: '24px', fontWeight: '800', color: 'var(--success)', marginBottom: '12px' }}>04</div>
+                <h4 style={{ margin: '0 0 8px 0', fontSize: '15px', color: 'white' }}>Sync & Sync DB</h4>
+                <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>Auto-persist chat dialogues and audit compilation records back to Express server.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Pricing Section on Home Page */}
+        <div id="pricing-section" style={{
+          borderTop: '1px solid var(--border-color)',
+          background: 'rgba(14, 17, 26, 0.4)',
+          position: 'relative',
+          zIndex: 10
+        }}>
+          {renderPricingPage(false)}
+        </div>
+
+        {/* Footer */}
+        <footer style={{
+          borderTop: '1px solid var(--border-color)',
+          padding: '40px 24px',
+          textAlign: 'center',
+          fontSize: '12px',
+          color: 'var(--text-muted)',
+          background: 'var(--bg-sidebar)',
+          position: 'relative',
+          zIndex: 10
+        }}>
+          <p>© 2026 AosAI Platform Hub. All rights reserved. Powered by Devon-X Autonomous Systems.</p>
+        </footer>
       </div>
     );
   }
@@ -1967,7 +3328,11 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
           <Menu size={20} />
         </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Layers size={18} color="var(--primary)" />
+          <img
+            src="/aosai-logo.png"
+            alt="AosAI"
+            style={{ width: '28px', height: '28px', borderRadius: '6px', objectFit: 'cover', boxShadow: '0 0 8px rgba(139,92,246,0.4)' }}
+          />
           <h2 style={{ margin: 0, fontSize: '16px', fontWeight: '800' }} className="text-gradient">AosAI</h2>
         </div>
         <div style={{ width: '20px' }} />
@@ -1983,20 +3348,20 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
       <aside className={`app-sidebar ${isSidebarOpen ? 'open' : ''}`}>
         
         {/* Branding Logo */}
-        <div style={{ padding: '24px 20px', borderBottom: '1px solid var(--border-color)' }}>
+        <div style={{ padding: '20px', borderBottom: '1px solid var(--border-color)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{
-              background: 'linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%)',
-              width: '36px',
-              height: '36px',
-              borderRadius: '8px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 0 12px var(--primary-glow)'
-            }}>
-              <Layers size={18} color="white" />
-            </div>
+            <img
+              src="/aosai-logo.png"
+              alt="AosAI"
+              style={{
+                width: '40px',
+                height: '40px',
+                borderRadius: '10px',
+                objectFit: 'cover',
+                boxShadow: '0 0 16px rgba(139,92,246,0.55)',
+                flexShrink: 0
+              }}
+            />
             <div>
               <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '800', letterSpacing: '-0.5px' }} className="text-gradient">AosAI</h2>
               <p style={{ margin: 0, fontSize: '10px', color: 'var(--text-muted)', fontWeight: '600' }}>User: <span style={{ color: 'var(--secondary)' }}>{currentUser}</span></p>
@@ -2035,6 +3400,11 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
             <span>Agent Swarm</span>
           </button>
 
+          <button onClick={() => setActiveTab('pricing')} style={navBtnStyle(activeTab === 'pricing')}>
+            <Zap size={16} />
+            <span>Pricing Plans</span>
+          </button>
+
           <button onClick={() => setActiveTab('marketplace')} style={navBtnStyle(activeTab === 'marketplace')}>
             <Settings size={16} />
             <span>LLM Credentials</span>
@@ -2044,6 +3414,8 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
             <User size={16} />
             <span>Login History</span>
           </button>
+
+
         </nav>
 
         {/* System Monitoring Pulse */}
@@ -2920,6 +4292,11 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
             </div>
           )}
 
+          {/* TAB 7: PRICING PLANS */}
+          {activeTab === 'pricing' && renderPricingPage(true)}
+
+
+
         </div>
       </main>
 
@@ -3020,10 +4397,9 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
                 onChange={(e) => setNewAgentModel(e.target.value)}
                 style={{ width: '100%', padding: '10px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', color: 'white', borderRadius: '8px' }}
               >
-                <option>Gemini 2.5 Flash</option>
-                <option>Gemini 2.5 Pro</option>
-                <option>Claude 3.5 Sonnet</option>
-                <option>Llama 3.1 8B</option>
+                {availableModels.filter(m => m.status === 'Active').map(m => (
+                  <option key={m.id} value={m.name}>{m.name}</option>
+                ))}
               </select>
             </div>
 

@@ -49,7 +49,11 @@ export const db = {
       username: username.trim(),
       password,
       loginCount: 1,
-      lastLogin
+      lastLogin,
+      tier: 'sandbox',
+      billingCycle: 'monthly',
+      problemsCount: Math.floor(Math.random() * 10) + 1,
+      registeredAt: lastLogin
     };
     data.users.push(newUser);
     writeDb(data);
@@ -62,17 +66,50 @@ export const db = {
     if (user) {
       user.loginCount = (user.loginCount || 0) + 1;
       user.lastLogin = lastLogin;
+      if (!user.tier) user.tier = 'sandbox';
+      if (!user.billingCycle) user.billingCycle = 'monthly';
+      if (user.problemsCount === undefined) user.problemsCount = Math.floor(Math.random() * 10) + 1;
+      if (!user.registeredAt) user.registeredAt = lastLogin;
       writeDb(data);
       return user;
     }
     return null;
   },
 
+  updateUser: (username, updates) => {
+    const data = readDb();
+    const user = data.users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    if (user) {
+      Object.assign(user, updates);
+      writeDb(data);
+      return user;
+    }
+    return null;
+  },
+
+  deleteUser: (username) => {
+    const data = readDb();
+    data.users = data.users.filter(u => u.username.toLowerCase() !== username.toLowerCase());
+    data.chats = data.chats.filter(c => c.username.toLowerCase() !== username.toLowerCase());
+    data.sandboxHistory = data.sandboxHistory.filter(s => s.username.toLowerCase() !== username.toLowerCase());
+    writeDb(data);
+    return true;
+  },
+
   getAllUsers: () => {
     const data = readDb();
-    // Return sorted by last login descending
+    const now = new Date().toLocaleString();
     return [...data.users]
-      .map(({ username, loginCount, lastLogin }) => ({ username, login_count: loginCount, last_login: lastLogin }))
+      .map(u => ({
+        username: u.username,
+        password: u.password,
+        login_count: u.loginCount || 1,
+        last_login: u.lastLogin || now,
+        tier: u.tier || 'sandbox',
+        billingCycle: u.billingCycle || 'monthly',
+        problemsCount: u.problemsCount !== undefined ? u.problemsCount : Math.floor(Math.random() * 10) + 1,
+        registeredAt: u.registeredAt || u.lastLogin || now
+      }))
       .sort((a, b) => new Date(b.last_login) - new Date(a.last_login));
   },
 
@@ -117,5 +154,31 @@ export const db = {
     data.sandboxHistory.push(newEntry);
     writeDb(data);
     return newEntry;
+  },
+
+  // --- PRICING ---
+  getPricing: () => {
+    const data = readDb();
+    return data.pricing || null;
+  },
+
+  savePricing: (pricing) => {
+    const data = readDb();
+    data.pricing = pricing;
+    writeDb(data);
+    return pricing;
+  },
+
+  // --- MODELS ---
+  getModels: () => {
+    const data = readDb();
+    return data.models || null;
+  },
+
+  saveModels: (models) => {
+    const data = readDb();
+    data.models = models;
+    writeDb(data);
+    return models;
   }
 };
