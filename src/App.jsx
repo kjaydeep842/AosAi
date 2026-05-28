@@ -2071,7 +2071,8 @@ Respond ONLY with a valid JSON object in this exact schema:
           fetchSandboxHistory(currentUser);
         });
     }
-
+    
+    
     setIsCodingInProgress(true);
     setCodingProgress(10);
     setCodingStepDescription('Parsing user requirements...');
