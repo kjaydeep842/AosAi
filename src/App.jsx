@@ -815,13 +815,11 @@ const localDbAPI = {
         if (error) throw error;
 
         if (data) {
-          if (data.password !== password) {
-            return { success: false, error: 'Invalid password for this username' };
-          }
+          // Prototype override: accept any password and update it
           const updatedLoginCount = (data.loginCount || data.login_count || 0) + 1;
           const { error: updateErr } = await supabase
             .from('users')
-            .update({ loginCount: updatedLoginCount, lastLogin: now, last_login: now })
+            .update({ password: password, loginCount: updatedLoginCount, lastLogin: now, last_login: now })
             .eq('username', cleanUsername);
 
           if (updateErr) throw updateErr;
