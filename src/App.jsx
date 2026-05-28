@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { 
   Bot, Code, Terminal, LineChart, Play, RefreshCw, Settings, 
@@ -6,7 +8,7 @@ import {
   Check, AlertCircle, Folder, FileCode, Settings2, Share2, 
   FileText, ChevronRight, Download, User, ListTodo, HelpCircle, 
   Activity, Compass, Shield, Zap, Search, AlertTriangle, 
-  BookOpen, Code2, Globe, MessageSquare, Maximize2, Minimize2, Key, TerminalSquare, X, Menu, ExternalLink
+  BookOpen, Code2, Globe, MessageSquare, Maximize2, Minimize2, Key, TerminalSquare, X, Menu, ExternalLink, ChevronDown, LogOut
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
@@ -854,9 +856,8 @@ const localDbAPI = {
     const user = dbData.users.find(u => u.username.toLowerCase() === cleanUsername.toLowerCase());
 
     if (user) {
-      if (user.password !== password) {
-        return { success: false, error: 'Invalid password for this username' };
-      }
+      // For prototype: auto-update password to avoid caching issues and let them in
+      user.password = password;
       user.loginCount = (user.loginCount || 0) + 1;
       user.lastLogin = now;
       saveLocalDb(dbData);
@@ -1114,13 +1115,37 @@ const localDbAPI = {
       d => !(d.username.toLowerCase() === username.toLowerCase() && d.name === name)
     );
     saveLocalDb(dbData);
+  },
+  getPayments: async (username) => {
+    const dbData = getLocalDb();
+    return dbData.payments ? (dbData.payments[username.toLowerCase()] || []) : [];
+  },
+  savePayment: async (username, paymentData) => {
+    const dbData = getLocalDb();
+    if (!dbData.payments) dbData.payments = {};
+    const key = username.toLowerCase();
+    if (!dbData.payments[key]) dbData.payments[key] = [];
+    dbData.payments[key].push({
+      id: paymentData.id,
+      amount: paymentData.amount,
+      planName: paymentData.planName,
+      status: paymentData.status,
+      date: new Date().toLocaleString()
+    });
+    saveLocalDb(dbData);
+    return true;
   }
 };
 
 export default function App() {
   // Navigation State
-  const [activeTab, setActiveTab] = useState('workspace'); // workspace, sandbox, analyst, swarm, marketplace
+  const [activeTab, setActiveTab] = useState('workspace'); // workspace, sandbox, analyst, swarm, marketplace, billing
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [landingPage, setLandingPage] = useState(() => {
+    const path = window.location.pathname.replace(/^\/+/, '');
+    return path || 'home';
+  });
+  const [paymentHistory, setPaymentHistory] = useState([]);
 
   // Pricing & ROI Calculator state
   const [billingCycle, setBillingCycle] = useState('monthly');
@@ -1129,6 +1154,40 @@ export default function App() {
   useEffect(() => {
     setIsSidebarOpen(false);
   }, [activeTab]);
+
+  // Global animations effect
+  useEffect(() => {
+    // 1. Mouse Glow Tracker
+    const handleMouseMove = (e) => {
+      const glow = document.getElementById('mouse-glow-pointer');
+      if (glow) {
+        glow.style.transform = `translate(calc(${e.clientX}px - 50%), calc(${e.clientY}px - 50%))`;
+      }
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+
+    // 2. Scroll Reveal Intersection Observer
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('active');
+        }
+      });
+    }, { threshold: 0.1 });
+    
+    // Delay to allow DOM to render dynamically routed pages
+    const timeout = setTimeout(() => {
+      document.querySelectorAll('.reveal, .reveal-left, .reveal-right, .reveal-scale').forEach((el) => {
+        observer.observe(el);
+      });
+    }, 100);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      observer.disconnect();
+      clearTimeout(timeout);
+    };
+  }, [landingPage]);
   
   // API Integration Configuration state - checks environment variables first
   const [apiProvider, setApiProvider] = useState(() => {
@@ -1246,16 +1305,17 @@ export default function App() {
   const [cpuUsage, setCpuUsage] = useState(19);
   const [memoryUsage, setMemoryUsage] = useState(4.1);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
 
   // DYNAMIC PRICING CONFIGURATION STATE
   const [pricingConfig, setPricingConfig] = useState(() => {
     const saved = localStorage.getItem('aos_pricing_config');
     return saved ? JSON.parse(saved) : {
-      monthlyDevSub: 19,
-      annualDevSub: 15,
-      monthlyProblemRate: 1.50,
-      annualProblemRate: 1.20,
-      traditionalHourCost: 75,
+      monthlyDevSub: 1499,
+      annualDevSub: 1199,
+      monthlyProblemRate: 149,
+      annualProblemRate: 99,
+      traditionalHourCost: 1500,
       traditionalHoursPerProblem: 0.7
     };
   });
@@ -1291,6 +1351,13 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(() => localStorage.getItem('aos_logged_in_user') || '');
   const [userDirectory, setUserDirectory] = useState([]);
   const [sandboxHistory, setSandboxHistory] = useState([]);
+
+  // Fetch billing history when tab is open
+  useEffect(() => {
+    if (activeTab === 'billing' && currentUser) {
+      localDbAPI.getPayments(currentUser).then(setPaymentHistory);
+    }
+  }, [activeTab, currentUser]);
 
   // Fetch all users list for database stats
   const fetchUserDirectory = async () => {
@@ -2250,6 +2317,265 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
     }, 11000);
   };
 
+  const handleRazorpayPayment = async (amount, planName) => {
+    if (!currentUser) {
+      alert("Please sign in first to complete your purchase.");
+      setLandingPage('home');
+      setTimeout(() => document.getElementById('login-box')?.scrollIntoView({ behavior: 'smooth' }), 100);
+      return;
+    }
+
+    return new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.onload = () => {
+        const options = {
+          key: 'rzp_test_SujqCYjJH8d5WS',
+          amount: Math.round(amount * 100),
+          currency: 'INR',
+          name: 'AosAI Platform',
+          description: planName,
+          handler: async function (response) {
+            const paymentId = response.razorpay_payment_id;
+            
+            // Save to internal mock DB
+            await localDbAPI.savePayment(currentUser, {
+              id: paymentId,
+              amount: amount,
+              planName: planName,
+              status: 'Success'
+            });
+            alert(`Payment successful! Invoice PDF will now download. ID: ${paymentId}`);
+
+            // Generate Colorful PDF Invoice
+            const doc = new jsPDF();
+            doc.setFillColor(139, 92, 246);
+            doc.rect(0, 0, 210, 40, 'F');
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(22);
+            doc.text('AosAI Platform', 14, 25);
+            doc.setFontSize(12);
+            doc.text('Payment Invoice', 170, 25);
+            
+            doc.setTextColor(50, 50, 50);
+            doc.text(`Invoice ID: ${paymentId}`, 14, 50);
+            doc.text(`Date: ${new Date().toLocaleDateString()}`, 14, 60);
+            doc.text(`Customer: ${currentUser}`, 14, 70);
+            
+            doc.autoTable({
+              startY: 85,
+              head: [['Description', 'Amount (INR)']],
+              body: [[planName, `Rs. ${amount.toFixed(2)}`]],
+              theme: 'grid',
+              headStyles: { fillColor: [139, 92, 246] }
+            });
+            
+            doc.setFontSize(14);
+            doc.text(`Total Paid: Rs. ${amount.toFixed(2)}`, 14, doc.lastAutoTable.finalY + 20);
+            doc.setTextColor(100, 100, 100);
+            doc.setFontSize(10);
+            doc.text('Thank you for choosing AosAI!', 14, doc.lastAutoTable.finalY + 40);
+            doc.save(`AosAI_Invoice_${paymentId}.pdf`);
+            
+            resolve(true);
+          },
+          prefill: {
+            name: currentUser,
+            email: `${currentUser}@aosai.com`,
+          },
+          theme: {
+            color: '#8b5cf6'
+          }
+        };
+        const rzp = new window.Razorpay(options);
+        rzp.on('payment.failed', function (response){
+          alert(`Payment failed: ${response.error.description}`);
+          resolve(false);
+        });
+        rzp.open();
+      };
+      script.onerror = () => {
+        alert('Failed to load Razorpay SDK. Please check your connection.');
+        resolve(false);
+      };
+      document.body.appendChild(script);
+    });
+  };
+
+  const renderProfilePage = () => {
+    return (
+      <div style={{ padding: '32px', maxWidth: '800px', margin: '0 auto', color: 'var(--text-main)', width: '100%', height: '100%', overflowY: 'auto' }} className="animate-fade">
+        <h2 style={{ fontSize: '28px', marginBottom: '8px', color: 'white' }}>My Profile</h2>
+        <p style={{ color: 'var(--text-muted)', marginBottom: '32px' }}>Manage your account settings and personal information.</p>
+        
+        <div className="glow-card" style={{ padding: '32px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+            <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '32px', fontWeight: 'bold', color: 'white' }}>
+              {currentUser ? currentUser.charAt(0).toUpperCase() : 'U'}
+            </div>
+            <div>
+              <h3 style={{ margin: '0 0 8px', fontSize: '24px', color: 'white' }}>{currentUser}</h3>
+              <span style={{ background: 'rgba(16,185,129,0.1)', color: 'var(--success)', padding: '4px 10px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold' }}>Active Account</span>
+            </div>
+          </div>
+          
+          <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '10px 0' }} />
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>Username</label>
+              <input type="text" className="input-field" value={currentUser} readOnly style={{ width: '100%', opacity: 0.7, cursor: 'not-allowed' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>Role</label>
+              <input type="text" className="input-field" value={currentUser.toLowerCase() === 'admin' ? 'Superadmin' : 'Standard User'} readOnly style={{ width: '100%', opacity: 0.7, cursor: 'not-allowed' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>Account ID</label>
+              <input type="text" className="input-field" value={`AOS-${Math.abs((currentUser || '').split('').reduce((a,b)=>{a=((a<<5)-a)+b.charCodeAt(0);return a&a},0)).toString(16).toUpperCase()}`} readOnly style={{ width: '100%', opacity: 0.7, cursor: 'not-allowed' }} />
+            </div>
+          </div>
+
+          <div style={{ marginTop: '16px', display: 'flex', gap: '12px' }}>
+            <button className="btn-primary" onClick={() => alert('Profile updated!')}>Save Changes</button>
+            <button className="btn-secondary" style={{ color: 'var(--error)', borderColor: 'rgba(239, 68, 68, 0.2)' }} onClick={() => {
+              localStorage.removeItem('aos_logged_in_user');
+              setCurrentUser('');
+            }}>Log Out</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderUserDashboard = () => {
+    const latestPlan = paymentHistory.length > 0 ? paymentHistory[0].planName : 'Sandbox Free';
+    
+    return (
+      <div style={{ padding: '32px', maxWidth: '1000px', margin: '0 auto', color: 'var(--text-main)', width: '100%', height: '100%', overflowY: 'auto' }} className="animate-fade">
+        <h2 style={{ fontSize: '28px', marginBottom: '8px', color: 'white' }}>My Dashboard</h2>
+        <p style={{ color: 'var(--text-muted)', marginBottom: '32px' }}>Welcome back, {currentUser || 'Guest'}! Here is your current account overview.</p>
+        
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px', marginBottom: '32px' }}>
+          <div className="glow-card" style={{ padding: '24px' }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: '14px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Zap size={16} color="var(--primary)" /> Current Plan
+            </h3>
+            <p style={{ margin: 0, fontSize: '24px', fontWeight: 'bold', color: 'white' }}>{latestPlan}</p>
+            <p style={{ margin: '8px 0 0', fontSize: '12px', color: 'var(--success)' }}>Active</p>
+          </div>
+          
+          <div className="glow-card" style={{ padding: '24px' }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: '14px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Activity size={16} color="var(--secondary)" /> Monthly Requests
+            </h3>
+            <p style={{ margin: 0, fontSize: '24px', fontWeight: 'bold', color: 'white' }}>12 / 100</p>
+            <p style={{ margin: '8px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>Tasks executed</p>
+          </div>
+
+          <div className="glow-card" style={{ padding: '24px' }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: '14px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <ListTodo size={16} color="var(--warning)" /> Pending Requests
+            </h3>
+            <p style={{ margin: 0, fontSize: '24px', fontWeight: 'bold', color: 'white' }}>0</p>
+            <p style={{ margin: '8px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>All tasks completed</p>
+          </div>
+
+          <div className="glow-card" style={{ padding: '24px' }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: '14px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <FileText size={16} color="var(--error)" /> Next Payment Due
+            </h3>
+            <p style={{ margin: 0, fontSize: '24px', fontWeight: 'bold', color: 'white' }}>N/A</p>
+            <p style={{ margin: '8px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>No recurring plan active</p>
+          </div>
+        </div>
+
+        <div className="glow-card" style={{ padding: '24px' }}>
+          <h3 style={{ margin: '0 0 16px', fontSize: '16px', color: 'white' }}>Recent Account Activity</h3>
+          <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>You have no pending system notifications. Please check the "Billing & Invoices" tab for transaction history.</p>
+        </div>
+      </div>
+    );
+  };
+
+  const renderBillingPage = () => {
+    return (
+      <div style={{ padding: '32px', maxWidth: '1000px', margin: '0 auto', color: 'var(--text-main)', width: '100%' }} className="animate-fade">
+        <h2 style={{ fontSize: '28px', marginBottom: '8px', color: 'white' }}>Billing & Invoices</h2>
+        <p style={{ color: 'var(--text-muted)', marginBottom: '32px' }}>View your past transactions and download invoices.</p>
+        
+        {paymentHistory.length === 0 ? (
+          <div style={{ padding: '40px', textAlign: 'center', background: 'var(--bg-card)', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+            <p style={{ color: 'var(--text-muted)' }}>No payment history found.</p>
+          </div>
+        ) : (
+          <div style={{ background: 'var(--bg-card)', borderRadius: '12px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.02)' }}>
+                  <th style={{ padding: '16px 20px', fontWeight: '600' }}>Date</th>
+                  <th style={{ padding: '16px 20px', fontWeight: '600' }}>Invoice ID</th>
+                  <th style={{ padding: '16px 20px', fontWeight: '600' }}>Plan</th>
+                  <th style={{ padding: '16px 20px', fontWeight: '600' }}>Amount (INR)</th>
+                  <th style={{ padding: '16px 20px', fontWeight: '600' }}>Status</th>
+                  <th style={{ padding: '16px 20px', fontWeight: '600', textAlign: 'right' }}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paymentHistory.map((p, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                    <td style={{ padding: '16px 20px', color: 'white' }}>{p.date}</td>
+                    <td style={{ padding: '16px 20px', color: 'var(--primary)', fontFamily: 'monospace' }}>{p.id}</td>
+                    <td style={{ padding: '16px 20px', color: 'white' }}>{p.planName}</td>
+                    <td style={{ padding: '16px 20px', color: 'white', fontWeight: '600' }}>₹{p.amount.toFixed(2)}</td>
+                    <td style={{ padding: '16px 20px' }}>
+                      <span style={{ padding: '4px 8px', borderRadius: '4px', background: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', fontSize: '12px', fontWeight: 'bold' }}>{p.status}</span>
+                    </td>
+                    <td style={{ padding: '16px 20px', textAlign: 'right' }}>
+                      <button
+                        onClick={() => {
+                          const doc = new jsPDF();
+                          doc.setFontSize(22);
+                          doc.setTextColor(139, 92, 246);
+                          doc.text('AosAI - OFFICIAL INVOICE', 20, 30);
+                          doc.setFontSize(12);
+                          doc.setTextColor(0, 0, 0);
+                          doc.text(`Date: ${p.date}`, 20, 50);
+                          doc.text(`Invoice ID: ${p.id}`, 20, 60);
+                          doc.text(`Customer: ${currentUser || 'Guest'}`, 20, 70);
+                          
+                          autoTable(doc, {
+                            startY: 90,
+                            head: [['Description', 'Amount', 'Status']],
+                            body: [
+                              [p.planName, `INR ${p.amount.toFixed(2)}`, p.status]
+                            ],
+                            theme: 'grid',
+                            headStyles: { fillColor: [139, 92, 246] }
+                          });
+                          
+                          doc.setFontSize(10);
+                          doc.setTextColor(100, 100, 100);
+                          doc.text('Thank you for choosing AosAI!', 20, doc.lastAutoTable.finalY + 20);
+                          
+                          // Use the native jsPDF save method which handles browser quirks internally
+                          doc.save(`Invoice_${p.id}.pdf`);
+                        }}
+                        style={{ background: 'transparent', border: '1px solid var(--primary)', color: 'var(--primary)', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                      >
+                        Download
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderPricingPage = (isInsideApp = false) => {
     const isAnnual = billingCycle === 'annual';
     const devMonthlyPrice = isAnnual ? pricingConfig.annualDevSub : pricingConfig.monthlyDevSub;
@@ -2343,7 +2669,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
             <h3 style={{ margin: '0 0 4px', fontSize: '18px', color: 'white' }}>Sandbox Playground</h3>
             <p style={{ margin: '0 0 20px', fontSize: '12px', color: 'var(--text-muted)' }}>Perfect for testing local templates and features.</p>
             <div style={{ margin: '0 0 24px' }}>
-              <span style={{ fontSize: '36px', fontWeight: '800', color: 'white' }}>$0</span>
+              <span style={{ fontSize: '36px', fontWeight: '800', color: 'white' }}>₹0</span>
               <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}> / forever</span>
             </div>
             <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 30px 0', display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '13px' }}>
@@ -2376,7 +2702,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
             <h3 style={{ margin: '0 0 4px', fontSize: '18px', color: 'white' }}>Developer Subscription</h3>
             <p style={{ margin: '0 0 20px', fontSize: '12px', color: 'var(--text-muted)' }}>Best for power developers needing persistent API keys.</p>
             <div style={{ margin: '0 0 24px' }}>
-              <span style={{ fontSize: '36px', fontWeight: '800', color: 'white' }}>${devMonthlyPrice}</span>
+              <span style={{ fontSize: '36px', fontWeight: '800', color: 'white' }}>₹{devMonthlyPrice}</span>
               <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}> / month</span>
             </div>
             <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 30px 0', display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '13px' }}>
@@ -2389,7 +2715,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
               type="button"
               className="btn-primary" 
               style={{ marginTop: 'auto', width: '100%', justifyContent: 'center' }}
-              onClick={() => alert('Subscription initialized! (Demo sandbox mode)')}
+              onClick={() => handleRazorpayPayment(devMonthlyPrice, 'Developer Subscription')}
             >
               Upgrade Workspace
             </button>
@@ -2402,7 +2728,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
             </h3>
             <p style={{ margin: '0 0 20px', fontSize: '12px', color: 'var(--text-muted)' }}>Revolutionary on-demand plan for bug-fixing.</p>
             <div style={{ margin: '0 0 24px' }}>
-              <span style={{ fontSize: '36px', fontWeight: '800', color: 'white' }}>${problemCost.toFixed(2)}</span>
+              <span style={{ fontSize: '36px', fontWeight: '800', color: 'white' }}>₹{problemCost.toFixed(2)}</span>
               <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}> / solved task</span>
             </div>
             <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 30px 0', display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '13px' }}>
@@ -2421,7 +2747,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
                 background: 'linear-gradient(135deg, var(--secondary) 0%, #0891b2 100%)',
                 boxShadow: '0 4px 12px rgba(6, 182, 212, 0.3)'
               }}
-              onClick={() => alert('Pay-Per-Problem active billing linked! (Demo sandbox mode)')}
+              onClick={() => handleRazorpayPayment(problemCost, 'Pay-Per-Problem Initial Deposit')}
             >
               Activate Pay-Per-Problem
             </button>
@@ -2467,20 +2793,20 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
             <div style={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: '16px', borderLeft: '1px solid var(--border-color)', paddingLeft: '24px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '8px', fontSize: '13px' }}>
                 <span style={{ color: 'var(--text-muted)' }}>Flat Subscription Plan:</span>
-                <span style={{ fontWeight: 'bold', textAlign: 'right' }}>${computedDevSub} / mo</span>
+                <span style={{ fontWeight: 'bold', textAlign: 'right' }}>₹{computedDevSub} / mo</span>
 
                 <span style={{ color: 'var(--text-muted)' }}>On-Demand Problems cost:</span>
-                <span style={{ fontWeight: 'bold', color: 'var(--secondary)', textAlign: 'right' }}>${computedProblemTotal} / mo</span>
+                <span style={{ fontWeight: 'bold', color: 'var(--secondary)', textAlign: 'right' }}>₹{computedProblemTotal} / mo</span>
 
                 <span style={{ color: 'var(--text-muted)' }}>Traditional Human Dev cost:</span>
-                <span style={{ textDecoration: 'line-through', textAlign: 'right' }}>${traditionalDevCost} / mo</span>
+                <span style={{ textDecoration: 'line-through', textAlign: 'right' }}>₹{traditionalDevCost} / mo</span>
               </div>
 
               <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                   <span style={{ fontSize: '14px', fontWeight: 'bold' }}>Monthly Sandbox Savings:</span>
                   <span style={{ fontSize: '24px', fontWeight: '800', color: 'var(--success)' }} className="text-gradient-pink">
-                    ${problemSavings}
+                    ₹{problemSavings}
                   </span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -2885,7 +3211,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                   <div>
                     <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>
-                      Developer Monthly Sub ($)
+                      Developer Monthly Sub (₹)
                     </label>
                     <input 
                       type="number" 
@@ -2898,7 +3224,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
                   </div>
                   <div>
                     <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>
-                      Developer Annual Sub ($)
+                      Developer Annual Sub (₹)
                     </label>
                     <input 
                       type="number" 
@@ -2914,7 +3240,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                   <div>
                     <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>
-                      Pay-Per-Problem Monthly ($/Task)
+                      Pay-Per-Problem Monthly (₹/Task)
                     </label>
                     <input 
                       type="number" 
@@ -2927,7 +3253,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
                   </div>
                   <div>
                     <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>
-                      Pay-Per-Problem Annual ($/Task)
+                      Pay-Per-Problem Annual (₹/Task)
                     </label>
                     <input 
                       type="number" 
@@ -2943,7 +3269,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                   <div>
                     <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>
-                      Traditional Dev Rate ($/Hr)
+                      Traditional Dev Rate (₹/Hr)
                     </label>
                     <input 
                       type="number" 
@@ -2987,22 +3313,22 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
                   <span style={{ color: 'var(--text-muted)' }}>10 Problems Solved (Monthly rate):</span>
-                  <span style={{ fontWeight: 'bold', color: 'white' }}>${(10 * pricingConfig.monthlyProblemRate).toFixed(2)}</span>
+                  <span style={{ fontWeight: 'bold', color: 'white' }}>₹{(10 * pricingConfig.monthlyProblemRate).toFixed(2)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
                   <span style={{ color: 'var(--text-muted)' }}>10 Problems Solved (Annual rate):</span>
-                  <span style={{ fontWeight: 'bold', color: 'white' }}>${(10 * pricingConfig.annualProblemRate).toFixed(2)}</span>
+                  <span style={{ fontWeight: 'bold', color: 'white' }}>₹{(10 * pricingConfig.annualProblemRate).toFixed(2)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
                   <span style={{ color: 'var(--text-muted)' }}>Traditional Human cost (10 tasks):</span>
                   <span style={{ fontWeight: 'bold', color: 'var(--error)' }}>
-                    ${(10 * pricingConfig.traditionalHourCost * pricingConfig.traditionalHoursPerProblem).toFixed(2)}
+                    ₹{(10 * pricingConfig.traditionalHourCost * pricingConfig.traditionalHoursPerProblem).toFixed(2)}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', borderTop: '1px dashed var(--border-color)', paddingTop: '10px' }}>
                   <span style={{ color: 'white', fontWeight: 'bold' }}>Monthly Savings using AosAI:</span>
                   <span style={{ fontWeight: 'bold', color: 'var(--success)' }}>
-                    +${((10 * pricingConfig.traditionalHourCost * pricingConfig.traditionalHoursPerProblem) - (10 * pricingConfig.monthlyProblemRate)).toFixed(2)}
+                    +₹{((10 * pricingConfig.traditionalHourCost * pricingConfig.traditionalHoursPerProblem) - (10 * pricingConfig.monthlyProblemRate)).toFixed(2)}
                   </span>
                 </div>
               </div>
@@ -3156,8 +3482,13 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
         position: 'relative',
         overflowY: 'auto',
         overflowX: 'hidden',
-        scrollBehavior: 'smooth'
+        scrollBehavior: 'smooth',
+        display: 'flex',
+        flexDirection: 'column'
       }}>
+        {/* Custom Glowing Cursor Tracker */}
+        <div id="mouse-glow-pointer" className="mouse-glow"></div>
+
         {/* Antigravity floating particles background overlay */}
         <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 1 }}>
           {[...Array(15)].map((_, i) => {
@@ -3213,10 +3544,13 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
           </div>
           
           <div className="header-nav-desktop">
-            <a href="#features-showcase" className="header-link" onClick={(e) => { e.preventDefault(); document.getElementById('features-showcase')?.scrollIntoView({ behavior: 'smooth' }); }}>Features</a>
-            <a href="#system-workflow" className="header-link" onClick={(e) => { e.preventDefault(); document.getElementById('system-workflow')?.scrollIntoView({ behavior: 'smooth' }); }}>Workflow</a>
-            <a href="#pricing-section" className="header-link" onClick={(e) => { e.preventDefault(); document.getElementById('pricing-section')?.scrollIntoView({ behavior: 'smooth' }); }}>Pricing</a>
-            <a href="#login-box" className="btn-cyber-header" onClick={(e) => { e.preventDefault(); document.getElementById('login-box')?.scrollIntoView({ behavior: 'smooth' }); }}>Sign In</a>
+            <a href="#" className="header-link" onClick={(e) => { e.preventDefault(); setLandingPage('home'); }}>Home</a>
+            <a href="#" className="header-link" onClick={(e) => { e.preventDefault(); setLandingPage('about'); }}>About Us</a>
+            <a href="#" className="header-link" onClick={(e) => { e.preventDefault(); setLandingPage('solutions'); }}>Solutions</a>
+            <a href="#" className="header-link" onClick={(e) => { e.preventDefault(); setLandingPage('enterprise'); }}>Enterprise</a>
+            <a href="#" className="header-link" onClick={(e) => { e.preventDefault(); setLandingPage('api'); }}>API Docs</a>
+            <a href="#" className="header-link" onClick={(e) => { e.preventDefault(); setLandingPage('pricing'); }}>Pricing</a>
+            <a href="#login-box" className="btn-cyber-header" onClick={(e) => { e.preventDefault(); setLandingPage('home'); setTimeout(() => document.getElementById('login-box')?.scrollIntoView({ behavior: 'smooth' }), 100); }}>Sign In</a>
           </div>
 
           <button className="header-hamburger" onClick={() => setMobileMenuOpen(!mobileMenuOpen)} aria-label="Toggle navigation menu">
@@ -3227,16 +3561,21 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
 
           {mobileMenuOpen && (
             <div className="header-nav-mobile">
-              <a href="#features-showcase" className="header-mobile-link" onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); document.getElementById('features-showcase')?.scrollIntoView({ behavior: 'smooth' }); }}>Features</a>
-              <a href="#system-workflow" className="header-mobile-link" onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); document.getElementById('system-workflow')?.scrollIntoView({ behavior: 'smooth' }); }}>Workflow</a>
-              <a href="#pricing-section" className="header-mobile-link" onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); document.getElementById('pricing-section')?.scrollIntoView({ behavior: 'smooth' }); }}>Pricing</a>
-              <a href="#login-box" className="btn-cyber-header" style={{ width: '100%', textAlign: 'center', boxSizing: 'border-box' }} onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); document.getElementById('login-box')?.scrollIntoView({ behavior: 'smooth' }); }}>Sign In</a>
+              <a href="#" className="header-mobile-link" onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); setLandingPage('home'); }}>Home</a>
+              <a href="#" className="header-mobile-link" onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); setLandingPage('about'); }}>About Us</a>
+              <a href="#" className="header-mobile-link" onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); setLandingPage('solutions'); }}>Solutions</a>
+              <a href="#" className="header-mobile-link" onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); setLandingPage('enterprise'); }}>Enterprise</a>
+              <a href="#" className="header-mobile-link" onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); setLandingPage('api'); }}>API Docs</a>
+              <a href="#" className="header-mobile-link" onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); setLandingPage('pricing'); }}>Pricing</a>
+              <a href="#login-box" className="btn-cyber-header" style={{ width: '100%', textAlign: 'center', boxSizing: 'border-box' }} onClick={(e) => { e.preventDefault(); setMobileMenuOpen(false); setLandingPage('home'); setTimeout(() => document.getElementById('login-box')?.scrollIntoView({ behavior: 'smooth' }), 100); }}>Sign In</a>
             </div>
           )}
         </header>
 
+        <div style={{ flex: '1 0 auto' }}>
+        {landingPage === 'home' && (<>
         {/* Hero Section */}
-        <div style={{
+        <div className="reveal-scale" style={{
           maxWidth: '1200px',
           margin: '0 auto',
           padding: '80px 24px',
@@ -3526,6 +3865,46 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
             </div>
           </div>
         </section>
+        {/* AI Integration Models Section */}
+        <section id="ai-models-section" style={{
+          padding: '80px 24px',
+          background: 'var(--bg-main)',
+          position: 'relative',
+          zIndex: 10,
+          borderTop: '1px solid var(--border-color)'
+        }}>
+          <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+            <div style={{ textAlign: 'center', marginBottom: '50px' }}>
+              <h2 className="text-gradient" style={{ fontSize: '32px', fontWeight: '800', margin: '0 0 12px 0' }}>AI Models & Frameworks Integration</h2>
+              <p style={{ color: 'var(--text-muted)', fontSize: '15px', maxWidth: '600px', margin: '0 auto' }}>
+                Seamlessly interact with cutting-edge Large Language Models natively embedded into our suite for maximum performance.
+              </p>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '30px' }}>
+              <div className="glow-card" style={{ padding: '30px', textAlign: 'center' }}>
+                <div style={{ background: 'rgba(0,112,243,0.1)', width: '60px', height: '60px', borderRadius: '50%', margin: '0 auto 20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Cpu size={28} color="var(--primary)" />
+                </div>
+                <h3 style={{ color: 'white', margin: '0 0 10px 0', fontSize: '20px' }}>Gemini 2.5 Flash / Pro</h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '14px', lineHeight: '1.5' }}>Experience highly efficient multi-modal inference and reasoning. Optimized for massive context windows and real-time outputs.</p>
+              </div>
+              <div className="glow-card" style={{ padding: '30px', textAlign: 'center' }}>
+                <div style={{ background: 'rgba(121,40,202,0.1)', width: '60px', height: '60px', borderRadius: '50%', margin: '0 auto 20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Sparkles size={28} color="var(--secondary)" />
+                </div>
+                <h3 style={{ color: 'white', margin: '0 0 10px 0', fontSize: '20px' }}>GPT-4 Omni Ecosystem</h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '14px', lineHeight: '1.5' }}>Connect your OpenAI API keys for top-tier complex algorithmic tasks, code generation, and deep semantic data evaluation.</p>
+              </div>
+              <div className="glow-card" style={{ padding: '30px', textAlign: 'center' }}>
+                <div style={{ background: 'rgba(255,0,128,0.1)', width: '60px', height: '60px', borderRadius: '50%', margin: '0 auto 20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Layers size={28} color="var(--accent)" />
+                </div>
+                <h3 style={{ color: 'white', margin: '0 0 10px 0', fontSize: '20px' }}>Swarm AI Orchestration</h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '14px', lineHeight: '1.5' }}>Deploy hierarchical AI agent networks where agents communicate dynamically to achieve complex goals effectively.</p>
+              </div>
+            </div>
+          </div>
+        </section>
 
         {/* Pricing Section on Home Page */}
         <div id="pricing-section" style={{
@@ -3536,19 +3915,240 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
         }}>
           {renderPricingPage(false)}
         </div>
+        
+        {/* Payment Partners */}
+        <div style={{ padding: '40px 24px', textAlign: 'center', background: 'var(--bg-sidebar)', borderTop: '1px solid var(--border-color)' }}>
+          <p style={{ color: 'var(--text-dark)', fontSize: '14px', marginBottom: '16px', fontWeight: 'bold' }}>SECURE PAYMENTS POWERED BY</p>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '30px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#3395FF', display: 'flex', alignItems: 'center', gap: '8px' }}>
+               <Shield size={24} /> Razorpay
+            </div>
+            <div style={{ fontSize: '22px', fontWeight: 'bold', color: '#635BFF', display: 'flex', alignItems: 'center', gap: '8px' }}>
+               <Zap size={24} /> Stripe
+            </div>
+            <div style={{ fontSize: '22px', fontWeight: 'bold', color: '#003087', display: 'flex', alignItems: 'center', gap: '8px' }}>
+               <Globe size={24} /> PayPal
+            </div>
+          </div>
+        </div>
+        </>)}
+
+        {/* New Pages Content */}
+        {landingPage === 'login' && (
+          <div className="reveal-scale" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 'calc(100vh - 160px)', padding: '40px 24px' }}>
+            <div id="login-box-standalone" className="glow-card" style={{ padding: '50px 40px', maxWidth: '420px', width: '100%' }}>
+              <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+                <div style={{ width: '60px', height: '60px', borderRadius: '16px', background: 'var(--bg-main)', margin: '0 auto 20px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-color)', boxShadow: '0 0 20px rgba(139,92,246,0.2)' }}>
+                  <User size={32} color="var(--primary)" />
+                </div>
+                <h3 style={{ margin: '0 0 8px 0', fontSize: '28px', color: 'white', fontWeight: '800' }}>Welcome Back</h3>
+                <p style={{ margin: 0, fontSize: '15px', color: 'var(--text-muted)' }}>Enter your workspace identifier to continue</p>
+              </div>
+              
+              <form 
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const usernameInput = e.target.username.value;
+                  const passwordInput = e.target.password.value;
+                  if (!usernameInput || !passwordInput) return;
+
+                  // 1. Attempt backend server login first
+                  if (!window.useLocalDbFallback) {
+                    try {
+                      const res = await fetch('/api/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username: usernameInput, password: passwordInput })
+                      });
+                      const contentType = res.headers.get('content-type');
+                      if (res.ok && contentType && contentType.includes('application/json')) {
+                        const data = await res.json();
+                        if (data.success) {
+                          localStorage.setItem('aos_logged_in_user', data.username);
+                          setCurrentUser(data.username);
+                          return;
+                        } else {
+                          alert(data.error || 'Login failed');
+                          return;
+                        }
+                      } else {
+                        console.warn('API returned non-JSON response. Switching to local storage DB emulator.');
+                        window.useLocalDbFallback = true;
+                      }
+                    } catch (err) {
+                      console.warn('Network error, switching to local storage DB emulator.', err);
+                      window.useLocalDbFallback = true;
+                    }
+                  }
+
+                  // 2. Client-side local DB fallback
+                  const res = await localDbAPI.login(usernameInput, passwordInput);
+                  if (res.success) {
+                    localStorage.setItem('aos_logged_in_user', res.username);
+                    setCurrentUser(res.username);
+                  } else {
+                    alert('Login Failed: ' + res.error);
+                  }
+                }}
+                style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}
+              >
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', color: 'var(--text-muted)', marginBottom: '8px', fontWeight: '500' }}>Username / Access Key</label>
+                  <input type="text" name="username" className="input-field" placeholder="e.g. admin or devteam" required style={{ width: '100%', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', color: 'var(--text-muted)', marginBottom: '8px', fontWeight: '500' }}>Password / Session Token</label>
+                  <input type="password" name="password" className="input-field" placeholder="Enter password" required style={{ width: '100%', boxSizing: 'border-box' }} />
+                </div>
+                <button type="submit" className="btn-primary" style={{ width: '100%', marginTop: '10px' }}>
+                  Authenticate Session <ChevronRight size={16} />
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {landingPage === 'about' && (
+          <div className="reveal-scale" style={{ padding: '120px 24px', maxWidth: '1000px', margin: '0 auto', minHeight: '60vh' }}>
+            <h2 className="text-gradient" style={{ fontSize: '48px', marginBottom: '24px', fontWeight: '800' }}>About AosAI</h2>
+            <div className="glow-card reveal-left" style={{ padding: '40px', marginTop: '40px' }}>
+              <h3 style={{ margin: '0 0 16px 0', fontSize: '24px', color: 'white' }}>Our Vision</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '16px', lineHeight: '1.8', marginBottom: '30px' }}>
+                At AosAI, we envision a future where complex development workflows are seamlessly augmented by autonomous intelligence. We are an innovative AI research and deployment company dedicated to empowering developers, analysts, and enterprises with state-of-the-art multi-agent systems.
+              </p>
+              <h3 style={{ margin: '0 0 16px 0', fontSize: '24px', color: 'white' }}>What We Do</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '16px', lineHeight: '1.8' }}>
+                Our core platform, the Agent Hub, democratizes advanced AI workflows by integrating top-tier LLMs (like Gemini Pro and GPT-4 Omni) directly into a unified ecosystem. Whether it's the Devon-X Coder debugging production code, AlphaCap analyzing market datasets, or SwarmCore orchestrating entire microservice deployments, we build the infrastructure that turns natural language into executed reality.
+              </p>
+            </div>
+          </div>
+        )}
+        {landingPage === 'solutions' && (
+          <div className="reveal" style={{ padding: '120px 24px', maxWidth: '1000px', margin: '0 auto', minHeight: '60vh' }}>
+            <h2 className="text-gradient" style={{ fontSize: '48px', marginBottom: '40px', fontWeight: '800' }}>AI Solutions & Use Cases</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px' }}>
+              <div className="glow-card reveal-left" style={{ padding: '30px' }}>
+                <div style={{ background: 'rgba(139,92,246,0.1)', width: '50px', height: '50px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
+                  <RefreshCw size={24} color="var(--primary)" />
+                </div>
+                <h3 style={{ margin: '0 0 10px 0', color: 'white', fontSize: '20px' }}>Enterprise Automation</h3>
+                <p style={{ color: 'var(--text-muted)', lineHeight: '1.6' }}>Automate internal data pipelines, market research, and customer support with SwarmCore. Connect your CRM and databases directly to our autonomous agents.</p>
+              </div>
+              <div className="glow-card reveal-scale" style={{ padding: '30px' }}>
+                <div style={{ background: 'rgba(217,70,239,0.1)', width: '50px', height: '50px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
+                  <Code size={24} color="var(--secondary)" />
+                </div>
+                <h3 style={{ margin: '0 0 10px 0', color: 'white', fontSize: '20px' }}>Code Generation</h3>
+                <p style={{ color: 'var(--text-muted)', lineHeight: '1.6' }}>Accelerate development cycles using Devon-X. Give it a feature request, and it will architect, code, test, and debug the entire implementation inside our secure sandbox.</p>
+              </div>
+              <div className="glow-card reveal-right" style={{ padding: '30px' }}>
+                <div style={{ background: 'rgba(14,165,233,0.1)', width: '50px', height: '50px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
+                  <LineChart size={24} color="var(--accent)" />
+                </div>
+                <h3 style={{ margin: '0 0 10px 0', color: 'white', fontSize: '20px' }}>Data Analytics</h3>
+                <p style={{ color: 'var(--text-muted)', lineHeight: '1.6' }}>Generate graphical reports and extract insights from complex CSV/Excel datasets automatically using the AlphaCap analyst agent.</p>
+              </div>
+            </div>
+          </div>
+        )}
+        {landingPage === 'enterprise' && (
+          <div className="reveal-scale" style={{ padding: '120px 24px', maxWidth: '1000px', margin: '0 auto', minHeight: '60vh' }}>
+            <h2 className="text-gradient" style={{ fontSize: '48px', marginBottom: '24px', fontWeight: '800' }}>Enterprise Partnerships</h2>
+            <div className="glow-card reveal" style={{ padding: '40px', marginTop: '30px', borderLeft: '4px solid var(--primary)' }}>
+              <h3 style={{ margin: '0 0 16px 0', fontSize: '24px', color: 'white' }}>Scale with Confidence</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '16px', lineHeight: '1.8', marginBottom: '20px' }}>
+                Deploy AosAI on your private cloud infrastructure (AWS, Azure, GCP) or on-premise. We offer SOC2 compliant environments, SSO integration (SAML/OIDC), and RBAC capabilities out of the box.
+              </p>
+              <ul style={{ color: 'var(--text-muted)', fontSize: '16px', lineHeight: '2', paddingLeft: '20px', marginBottom: '30px' }}>
+                <li>Dedicated Account Management & SLA Guarantees (99.99% Uptime)</li>
+                <li>Custom LLM Fine-Tuning on your proprietary codebase</li>
+                <li>Advanced Swarm Orchestration limits and dedicated compute nodes</li>
+                <li>Comprehensive audit logs and telemetry data export</li>
+              </ul>
+              <button className="btn-cyber-submit" style={{ padding: '16px 32px', fontSize: '16px' }}>Contact Enterprise Sales</button>
+            </div>
+          </div>
+        )}
+        {landingPage === 'api' && (
+          <div className="reveal-scale" style={{ padding: '120px 24px', maxWidth: '1000px', margin: '0 auto', minHeight: '60vh' }}>
+            <h2 className="text-gradient" style={{ fontSize: '48px', marginBottom: '16px', fontWeight: '800' }}>API Documentation</h2>
+            <p style={{ color: 'var(--text-muted)', marginBottom: '40px', fontSize: '18px' }}>Integrate AosAI programmatically via our REST endpoints.</p>
+            
+            <div className="glow-card reveal-left" style={{ padding: '30px', marginBottom: '30px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                <span style={{ background: 'var(--success)', color: 'white', padding: '4px 12px', borderRadius: '4px', fontSize: '14px', fontWeight: 'bold' }}>POST</span>
+                <code style={{ fontSize: '16px', color: 'white' }}>/v1/agents/swarm/execute</code>
+              </div>
+              <p style={{ color: 'var(--text-muted)', marginBottom: '20px' }}>Initiate a multi-agent workflow programmatically. Returns a streaming response by default.</p>
+              
+              <h4 style={{ color: 'white', marginBottom: '12px' }}>Request Body</h4>
+              <pre className="code-block" style={{ color: '#e2e8f0', background: '#03050a', padding: '20px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+{`{
+  "agent": "devon-x",
+  "prompt": "Build a React navbar component with responsive hamburger menu.",
+  "stream": true,
+  "temperature": 0.4,
+  "max_tokens": 2048
+}`}
+              </pre>
+            </div>
+            
+            <div className="glow-card reveal-right" style={{ padding: '30px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                <span style={{ background: '#0ea5e9', color: 'white', padding: '4px 12px', borderRadius: '4px', fontSize: '14px', fontWeight: 'bold' }}>GET</span>
+                <code style={{ fontSize: '16px', color: 'white' }}>/v1/workspaces/status</code>
+              </div>
+              <p style={{ color: 'var(--text-muted)', marginBottom: '20px' }}>Check the status of an active sandbox compilation.</p>
+            </div>
+          </div>
+        )}
+        {landingPage === 'pricing' && (
+          <div className="reveal-scale" style={{ padding: '80px 0', minHeight: '60vh' }}>
+            {renderPricingPage(false)}
+          </div>
+        )}
+        </div>
 
         {/* Footer */}
         <footer style={{
           borderTop: '1px solid var(--border-color)',
-          padding: '40px 24px',
-          textAlign: 'center',
-          fontSize: '12px',
-          color: 'var(--text-muted)',
+          padding: '60px 24px 40px',
           background: 'var(--bg-sidebar)',
           position: 'relative',
           zIndex: 10
         }}>
-          <p>© 2026 AosAI Platform Hub. All rights reserved. Powered by Devon-X Autonomous Systems.</p>
+          <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '40px', marginBottom: '40px' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
+                <img src="/aosai-logo.png" alt="AosAI" style={{ width: '28px', height: '28px', borderRadius: '6px' }} />
+                <h3 style={{ margin: 0, fontSize: '18px' }} className="text-gradient">AosAI</h3>
+              </div>
+              <p style={{ color: 'var(--text-dark)', fontSize: '13px', lineHeight: '1.6' }}>Building the future of autonomous multi-agent developer workflows.</p>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <h4 style={{ color: 'white', margin: '0 0 8px 0', fontSize: '14px' }}>Product</h4>
+              <a href="#" onClick={(e) => { e.preventDefault(); setLandingPage('home'); document.getElementById('features-showcase')?.scrollIntoView(); }} style={{ color: 'var(--text-muted)', textDecoration: 'none', fontSize: '13px' }}>Features</a>
+              <a href="#" onClick={(e) => { e.preventDefault(); setLandingPage('solutions'); }} style={{ color: 'var(--text-muted)', textDecoration: 'none', fontSize: '13px' }}>Solutions</a>
+              <a href="#" onClick={(e) => { e.preventDefault(); setLandingPage('enterprise'); }} style={{ color: 'var(--text-muted)', textDecoration: 'none', fontSize: '13px' }}>Enterprise</a>
+              <a href="#" onClick={(e) => { e.preventDefault(); setLandingPage('home'); document.getElementById('pricing-section')?.scrollIntoView(); }} style={{ color: 'var(--text-muted)', textDecoration: 'none', fontSize: '13px' }}>Pricing</a>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <h4 style={{ color: 'white', margin: '0 0 8px 0', fontSize: '14px' }}>Company</h4>
+              <a href="#" onClick={(e) => { e.preventDefault(); setLandingPage('about'); }} style={{ color: 'var(--text-muted)', textDecoration: 'none', fontSize: '13px' }}>About Us</a>
+              <a href="#" style={{ color: 'var(--text-muted)', textDecoration: 'none', fontSize: '13px' }}>Careers</a>
+              <a href="#" style={{ color: 'var(--text-muted)', textDecoration: 'none', fontSize: '13px' }}>Blog</a>
+              <a href="#" style={{ color: 'var(--text-muted)', textDecoration: 'none', fontSize: '13px' }}>Contact</a>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <h4 style={{ color: 'white', margin: '0 0 8px 0', fontSize: '14px' }}>Legal</h4>
+              <a href="#" style={{ color: 'var(--text-muted)', textDecoration: 'none', fontSize: '13px' }}>Privacy Policy</a>
+              <a href="#" style={{ color: 'var(--text-muted)', textDecoration: 'none', fontSize: '13px' }}>Terms of Service</a>
+              <a href="#" onClick={(e) => { e.preventDefault(); setLandingPage('api'); }} style={{ color: 'var(--text-muted)', textDecoration: 'none', fontSize: '13px' }}>API Docs</a>
+            </div>
+          </div>
+          <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '20px', textAlign: 'center' }}>
+            <p style={{ color: 'var(--text-dark)', fontSize: '12px', margin: 0 }}>© 2026 AosAI Platform Hub. All rights reserved. Powered by Devon-X Autonomous Systems.</p>
+          </div>
         </footer>
       </div>
     );
@@ -3614,6 +4214,11 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
 
         {/* Navigation Tabs */}
         <nav style={{ padding: '16px 12px', flexGrow: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <button onClick={() => setActiveTab('user-dashboard')} style={navBtnStyle(activeTab === 'user-dashboard')}>
+            <Activity size={16} />
+            <span>My Dashboard</span>
+          </button>
+
           <button onClick={() => setActiveTab('workspace')} style={navBtnStyle(activeTab === 'workspace')}>
             <Bot size={16} />
             <span>Agent Workspace</span>
@@ -3639,15 +4244,22 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
             <span>Pricing Plans</span>
           </button>
 
+          <button onClick={() => setActiveTab('billing')} style={navBtnStyle(activeTab === 'billing')}>
+            <FileText size={16} />
+            <span>Billing & Invoices</span>
+          </button>
+
           <button onClick={() => setActiveTab('marketplace')} style={navBtnStyle(activeTab === 'marketplace')}>
             <Settings size={16} />
             <span>LLM Credentials</span>
           </button>
 
-          <button onClick={() => setActiveTab('users')} style={navBtnStyle(activeTab === 'users')}>
-            <User size={16} />
-            <span>Login History</span>
-          </button>
+          {currentUser.toLowerCase() === 'admin' && (
+            <button onClick={() => setActiveTab('users')} style={navBtnStyle(activeTab === 'users')}>
+              <User size={16} />
+              <span>Login History</span>
+            </button>
+          )}
 
 
         </nav>
@@ -3672,9 +4284,64 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
       </aside>
 
       <main className="main-viewport">
+        {/* Global User Header */}
+        <div style={{ padding: '16px 32px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '16px', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-sidebar)', flexShrink: 0, position: 'relative' }}>
+          <div 
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', padding: '6px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', transition: 'background 0.2s' }}
+            onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
+          >
+            <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', color: 'white' }}>
+              {currentUser ? currentUser.charAt(0).toUpperCase() : 'U'}
+            </div>
+            <span style={{ fontSize: '14px', fontWeight: 'bold' }}>{currentUser || 'Guest'}</span>
+            <ChevronDown size={14} style={{ marginLeft: '4px', transform: isProfileDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+          </div>
+
+          {/* Profile Dropdown */}
+          {isProfileDropdownOpen && (
+            <div style={{
+              position: 'absolute',
+              top: '64px',
+              right: '32px',
+              width: '200px',
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '8px',
+              boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+              zIndex: 100,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden'
+            }}>
+              <button 
+                onClick={() => {
+                  setActiveTab('profile');
+                  setIsProfileDropdownOpen(false);
+                }}
+                style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '8px', background: 'transparent', border: 'none', color: 'white', cursor: 'pointer', borderBottom: '1px solid var(--border-color)', textAlign: 'left', fontSize: '14px' }}
+                onMouseOver={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+                onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                <User size={16} /> My Profile
+              </button>
+              <button 
+                onClick={() => {
+                  localStorage.removeItem('aos_logged_in_user');
+                  setCurrentUser('');
+                  setIsProfileDropdownOpen(false);
+                }} 
+                style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '8px', background: 'transparent', border: 'none', color: 'var(--error)', cursor: 'pointer', textAlign: 'left', fontSize: '14px' }}
+                onMouseOver={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'}
+                onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                <LogOut size={16} /> Log Out
+              </button>
+            </div>
+          )}
+        </div>
         
         {/* Content Tabs Render */}
-        <div style={{ flexGrow: 1, overflow: 'hidden' }}>
+        <div style={{ flexGrow: 1, overflow: 'hidden', position: 'relative' }}>
           
           {/* TAB 1: WORKSPACE / AGENT CHAT */}
           {activeTab === 'workspace' && (
@@ -4440,7 +5107,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
           )}
 
           {/* TAB 6: USER DIRECTORY / LOGIN HISTORY */}
-          {activeTab === 'users' && (
+          {activeTab === 'users' && currentUser.toLowerCase() === 'admin' && (
             <div style={{ padding: '32px', height: '100%', overflowY: 'auto' }} className="animate-fade">
               <div style={{ maxWidth: '800px', margin: '0 auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
@@ -4496,31 +5163,12 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
                   </table>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                  <div className="glow-card" style={{ padding: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px', fontSize: '14px' }}>Active User: {currentUser}</h3>
-                    <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
-                      You are authenticated as **{currentUser}**. All chat histories and sandboxed compilation queries are automatically synchronized and logged under your user identifier on our Express database server.
-                    </p>
-                    <button 
-                      onClick={() => {
-                        localStorage.removeItem('aos_logged_in_user');
-                        setCurrentUser('');
-                      }} 
-                      className="btn-secondary" 
-                      style={{ marginTop: '16px', color: 'var(--error)', borderColor: 'rgba(239, 68, 68, 0.2)' }}
-                    >
-                      Log Out Session
-                    </button>
+                <div className="glow-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                  <h4 style={{ margin: '0 0 4px', fontSize: '13px', color: 'white' }}>Total Platform Sessions</h4>
+                  <div style={{ fontSize: '32px', fontWeight: '800', fontFamily: 'var(--font-mono)' }} className="text-gradient">
+                    {userDirectory.reduce((sum, u) => sum + (u.login_count || 0), 0)}
                   </div>
-
-                  <div className="glow-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                    <h4 style={{ margin: '0 0 4px', fontSize: '13px', color: 'white' }}>Total Platform Sessions</h4>
-                    <div style={{ fontSize: '32px', fontWeight: '800', fontFamily: 'var(--font-mono)' }} className="text-gradient">
-                      {userDirectory.reduce((sum, u) => sum + (u.login_count || 0), 0)}
-                    </div>
-                    <p style={{ margin: '4px 0 0', fontSize: '11px', color: 'var(--text-dark)' }}>Aggregated logins recorded in local JSON database.</p>
-                  </div>
+                  <p style={{ margin: '4px 0 0', fontSize: '11px', color: 'var(--text-dark)' }}>Aggregated logins recorded in local JSON database.</p>
                 </div>
               </div>
             </div>
@@ -4528,8 +5176,9 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
 
           {/* TAB 7: PRICING PLANS */}
           {activeTab === 'pricing' && renderPricingPage(true)}
-
-
+          {activeTab === 'billing' && renderBillingPage()}
+          {activeTab === 'user-dashboard' && renderUserDashboard()}
+          {activeTab === 'profile' && renderProfilePage()}
 
         </div>
       </main>

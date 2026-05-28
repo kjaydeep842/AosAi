@@ -2,23 +2,23 @@
   --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   --font-mono: 'Fira Code', monospace;
   
-  /* Color Palette - Cyber Space Dark Theme */
-  --bg-main: #090b11;
-  --bg-sidebar: #0e111a;
-  --bg-card: rgba(20, 24, 38, 0.7);
-  --bg-card-hover: rgba(26, 31, 48, 0.85);
+  /* Color Palette - Premium AI Dark Theme (Planvista Style) */
+  --bg-main: #06080F;
+  --bg-sidebar: #0B0E17;
+  --bg-card: rgba(15, 20, 31, 0.7);
+  --bg-card-hover: rgba(22, 29, 45, 0.85);
   --border-color: rgba(255, 255, 255, 0.08);
   --border-color-glow: rgba(139, 92, 246, 0.3);
   
   --primary: #8b5cf6;
   --primary-glow: rgba(139, 92, 246, 0.4);
-  --secondary: #06b6d4;
-  --secondary-glow: rgba(6, 182, 212, 0.4);
-  --accent: #ec4899;
+  --secondary: #d946ef;
+  --secondary-glow: rgba(217, 70, 239, 0.4);
+  --accent: #0ea5e9;
   
-  --text-main: #f3f4f6;
-  --text-muted: #9ca3af;
-  --text-dark: #6b7280;
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --text-dark: #475569;
   
   --success: #10b981;
   --warning: #f59e0b;
@@ -767,3 +767,88 @@ pre.code-block {
   }
 }
 
+/* Custom Cursor / Mouse Glow */
+.mouse-glow {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.15) 0%, transparent 50%);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 9999;
+  transform: translate(-50%, -50%);
+  transition: opacity 0.3s ease;
+  mix-blend-mode: screen;
+}
+
+/* Scroll Reveal Animations */
+.reveal {
+  opacity: 0;
+  transform: translateY(40px);
+  transition: all 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.reveal.active {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.reveal-left {
+  opacity: 0;
+  transform: translateX(-40px);
+  transition: all 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.reveal-left.active {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.reveal-right {
+  opacity: 0;
+  transform: translateX(40px);
+  transition: all 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.reveal-right.active {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.reveal-scale {
+  opacity: 0;
+  transform: scale(0.9);
+  transition: all 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.reveal-scale.active {
+  opacity: 1;
+  transform: scale(1);
+}
+
+@media (max-width: 1024px) {
+  .app-container {
+    flex-direction: column !important;
+  }
+  .app-sidebar {
+    width: 100% !important;
+    height: auto !important;
+    border-right: none !important;
+    border-bottom: 1px solid var(--border-color);
+    display: none; /* Hide sidebar by default on mobile, can be toggled */
+  }
+  .app-sidebar.open {
+    display: flex;
+  }
+  .analyst-layout {
+    grid-template-columns: 1fr !important;
+  }
+  .pricing-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .roi-estimator {
+    flex-direction: column !important;
+  }
+}
