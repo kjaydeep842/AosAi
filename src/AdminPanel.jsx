@@ -18,21 +18,51 @@ const modelsDefault = [
 const localDb = {
   getUsers: () => {
     try {
-      return JSON.parse(localStorage.getItem('aos_users') || '[]').map(u => ({
+      const dbVal = localStorage.getItem('aos_local_db');
+      const dbObj = dbVal ? JSON.parse(dbVal) : { users: [] };
+      const rawUsers = dbObj.users || [];
+      return rawUsers.map(u => ({
         ...u,
         tier: u.tier || 'sandbox',
         billingCycle: u.billingCycle || 'monthly',
         problemsCount: u.problemsCount || 0,
-        login_count: u.login_count || 1
+        login_count: u.loginCount || u.login_count || 1,
+        last_login: u.lastLogin || u.last_login || new Date().toLocaleString()
       }));
     } catch { return []; }
   },
   updateUser: (username, fields) => {
-    const users = localDb.getUsers().map(u => u.username === username ? { ...u, ...fields } : u);
-    localStorage.setItem('aos_users', JSON.stringify(users));
+    try {
+      const dbVal = localStorage.getItem('aos_local_db');
+      const dbObj = dbVal ? JSON.parse(dbVal) : { users: [] };
+      dbObj.users = (dbObj.users || []).map(u => {
+        if (u.username.toLowerCase() === username.toLowerCase()) {
+          const updated = { ...u, ...fields };
+          if (fields.login_count !== undefined) updated.loginCount = fields.login_count;
+          if (fields.last_login !== undefined) updated.lastLogin = fields.last_login;
+          return updated;
+        }
+        return u;
+      });
+      localStorage.setItem('aos_local_db', JSON.stringify(dbObj));
+    } catch (e) {
+      console.error(e);
+    }
   },
   deleteUser: (username) => {
-    localStorage.setItem('aos_users', JSON.stringify(localDb.getUsers().filter(u => u.username !== username)));
+    try {
+      const dbVal = localStorage.getItem('aos_local_db');
+      const dbObj = dbVal ? JSON.parse(dbVal) : { users: [] };
+      dbObj.users = (dbObj.users || []).filter(u => u.username.toLowerCase() !== username.toLowerCase());
+      dbObj.chats = (dbObj.chats || []).filter(c => c.username.toLowerCase() !== username.toLowerCase());
+      dbObj.sandboxHistory = (dbObj.sandboxHistory || []).filter(s => s.username.toLowerCase() !== username.toLowerCase());
+      if (dbObj.userDatasets) {
+        dbObj.userDatasets = dbObj.userDatasets.filter(d => d.username.toLowerCase() !== username.toLowerCase());
+      }
+      localStorage.setItem('aos_local_db', JSON.stringify(dbObj));
+    } catch (e) {
+      console.error(e);
+    }
   },
   getPricing: () => { try { return JSON.parse(localStorage.getItem('aos_pricing_config')) || pricingDefault; } catch { return pricingDefault; } },
   savePricing: (p) => localStorage.setItem('aos_pricing_config', JSON.stringify(p)),
@@ -477,7 +507,7 @@ export default function AdminPanel() {
             <div className="ap-fade">
               <div className="ap-toolbar">
                 <input className="ap-search" placeholder="🔍 Search customers..." value={search} onChange={e => setSearch(e.target.value)} />
-                <button className="ap-btn-primary" onClick={loadUsers}>↻ Refresh</button>
+                <button className="ap-btn-primary" onClick={loadData}>↻ Refresh</button>
               </div>
               <div className="ap-card">
                 <div className="ap-table-wrap">

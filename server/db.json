@@ -17,6 +17,16 @@
       "password": "123",
       "loginCount": 3,
       "lastLogin": "27/5/2026, 5:41:48 pm"
+    },
+    {
+      "username": "vivek",
+      "password": "password123",
+      "loginCount": 1,
+      "lastLogin": "28/5/2026, 10:43:00 am",
+      "tier": "sandbox",
+      "billingCycle": "monthly",
+      "problemsCount": 7,
+      "registeredAt": "28/5/2026, 10:43:00 am"
     }
   ],
   "chats": [],
