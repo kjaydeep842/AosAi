@@ -8,6 +8,7 @@ import {
   Activity, Compass, Shield, Zap, Search, AlertTriangle, 
   BookOpen, Code2, Globe, MessageSquare, Maximize2, Minimize2, Key, TerminalSquare, X, Menu, ExternalLink
 } from 'lucide-react';
+import { supabase } from './supabaseClient';
 
 // ==========================================
 // MOCK DATA: Initial Default Agents
@@ -797,11 +798,60 @@ const saveLocalDb = (data) => {
 };
 
 const localDbAPI = {
-  login: (username, password) => {
-    const dbData = getLocalDb();
+  login: async (username, password) => {
     const cleanUsername = username.trim();
-    const user = dbData.users.find(u => u.username.toLowerCase() === cleanUsername.toLowerCase());
     const now = new Date().toLocaleString();
+
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('*')
+          .eq('username', cleanUsername)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (data) {
+          if (data.password !== password) {
+            return { success: false, error: 'Invalid password for this username' };
+          }
+          const updatedLoginCount = (data.loginCount || data.login_count || 0) + 1;
+          const { error: updateErr } = await supabase
+            .from('users')
+            .update({ loginCount: updatedLoginCount, lastLogin: now, last_login: now })
+            .eq('username', cleanUsername);
+
+          if (updateErr) throw updateErr;
+
+          return { success: true, username: cleanUsername, loginCount: updatedLoginCount, lastLogin: now };
+        } else {
+          const { error: insertErr } = await supabase
+            .from('users')
+            .insert({
+              username: cleanUsername,
+              password,
+              loginCount: 1,
+              login_count: 1,
+              lastLogin: now,
+              last_login: now,
+              registeredAt: now,
+              tier: 'sandbox',
+              billingCycle: 'monthly',
+              problemsCount: 5
+            });
+
+          if (insertErr) throw insertErr;
+
+          return { success: true, username: cleanUsername, loginCount: 1, lastLogin: now, isNewUser: true };
+        }
+      } catch (err) {
+        console.error('Supabase login failed, using local storage:', err);
+      }
+    }
+
+    const dbData = getLocalDb();
+    const user = dbData.users.find(u => u.username.toLowerCase() === cleanUsername.toLowerCase());
 
     if (user) {
       if (user.password !== password) {
@@ -819,7 +869,30 @@ const localDbAPI = {
     }
   },
 
-  getUsers: () => {
+  getUsers: async () => {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('*');
+        if (error) throw error;
+        if (data && data.length > 0) {
+          return data.map(u => ({
+            username: u.username,
+            password: u.password,
+            login_count: u.loginCount || u.login_count || 1,
+            last_login: u.lastLogin || u.last_login || new Date().toLocaleString(),
+            tier: u.tier || 'sandbox',
+            billingCycle: u.billingCycle || 'monthly',
+            problemsCount: u.problemsCount !== undefined ? u.problemsCount : 5,
+            registeredAt: u.registeredAt || u.lastLogin || new Date().toLocaleString()
+          })).sort((a, b) => new Date(b.last_login) - new Date(a.last_login));
+        }
+      } catch (err) {
+        console.error('Supabase getUsers failed:', err);
+      }
+    }
+
     const dbData = getLocalDb();
     const now = new Date().toLocaleString();
     return dbData.users
@@ -836,7 +909,19 @@ const localDbAPI = {
       .sort((a, b) => new Date(b.last_login) - new Date(a.last_login));
   },
 
-  updateUser: (username, updates) => {
+  updateUser: async (username, updates) => {
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('users')
+          .update(updates)
+          .eq('username', username);
+        if (error) throw error;
+      } catch (err) {
+        console.error('Supabase updateUser failed:', err);
+      }
+    }
+
     const dbData = getLocalDb();
     const user = dbData.users.find(u => u.username.toLowerCase() === username.toLowerCase());
     if (user) {
@@ -847,7 +932,18 @@ const localDbAPI = {
     return null;
   },
 
-  deleteUser: (username) => {
+  deleteUser: async (username) => {
+    if (supabase) {
+      try {
+        await supabase.from('users').delete().eq('username', username);
+        await supabase.from('chats').delete().eq('username', username);
+        await supabase.from('sandboxHistory').delete().eq('username', username);
+        await supabase.from('userDatasets').delete().eq('username', username);
+      } catch (err) {
+        console.error('Supabase deleteUser failed:', err);
+      }
+    }
+
     const dbData = getLocalDb();
     dbData.users = dbData.users.filter(u => u.username.toLowerCase() !== username.toLowerCase());
     dbData.chats = dbData.chats.filter(c => c.username.toLowerCase() !== username.toLowerCase());
@@ -859,43 +955,134 @@ const localDbAPI = {
     return true;
   },
 
-  getChats: (username, agentId) => {
+  getChats: async (username, agentId) => {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('chats')
+          .select('*')
+          .eq('username', username)
+          .eq('agentId', agentId);
+        if (error) throw error;
+        if (data) return data;
+      } catch (err) {
+        console.error('Supabase getChats failed:', err);
+      }
+    }
+
     const dbData = getLocalDb();
     return dbData.chats.filter(
       c => c.username.toLowerCase() === username.toLowerCase() && c.agentId.toLowerCase() === agentId.toLowerCase()
     );
   },
 
-  saveChat: (username, agentId, sender, text, timestamp, monologue) => {
+  saveChat: async (username, agentId, sender, text, timestamp, monologue) => {
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('chats')
+          .insert({ username, agentId, sender, text, timestamp, monologue });
+        if (error) throw error;
+      } catch (err) {
+        console.error('Supabase saveChat failed:', err);
+      }
+    }
+
     const dbData = getLocalDb();
     dbData.chats.push({ username, agentId, sender, text, timestamp, monologue });
     saveLocalDb(dbData);
   },
 
-  getSandboxHistory: (username) => {
+  getSandboxHistory: async (username) => {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('sandboxHistory')
+          .select('*')
+          .eq('username', username);
+        if (error) throw error;
+        if (data) {
+          return data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        }
+      } catch (err) {
+        console.error('Supabase getSandboxHistory failed:', err);
+      }
+    }
+
     const dbData = getLocalDb();
     return dbData.sandboxHistory
       .filter(s => s.username.toLowerCase() === username.toLowerCase())
       .reverse();
   },
 
-  saveSandboxPrompt: (username, prompt, timestamp) => {
+  saveSandboxPrompt: async (username, prompt, timestamp) => {
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('sandboxHistory')
+          .insert({ username, prompt, timestamp });
+        if (error) throw error;
+      } catch (err) {
+        console.error('Supabase saveSandboxPrompt failed:', err);
+      }
+    }
+
     const dbData = getLocalDb();
     dbData.sandboxHistory.push({ username, prompt, timestamp });
     saveLocalDb(dbData);
   },
 
-  // --- User Dataset methods ---
-  getUserDatasets: (username) => {
+  getUserDatasets: async (username) => {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('userDatasets')
+          .select('*')
+          .eq('username', username);
+        if (error) throw error;
+        if (data) return data;
+      } catch (err) {
+        console.error('Supabase getUserDatasets failed:', err);
+      }
+    }
+
     const dbData = getLocalDb();
     if (!dbData.userDatasets) return [];
     return dbData.userDatasets.filter(d => d.username.toLowerCase() === username.toLowerCase());
   },
 
-  saveUserDataset: (username, dataset) => {
+  saveUserDataset: async (username, dataset) => {
+    if (supabase) {
+      try {
+        // Fetch existing first to update/insert properly
+        const { data, error: selectErr } = await supabase
+          .from('userDatasets')
+          .select('id')
+          .eq('username', username)
+          .eq('name', dataset.name)
+          .maybeSingle();
+
+        if (selectErr) throw selectErr;
+
+        if (data) {
+          const { error: updateErr } = await supabase
+            .from('userDatasets')
+            .update({ ...dataset, updatedAt: new Date().toLocaleString() })
+            .eq('id', data.id);
+          if (updateErr) throw updateErr;
+        } else {
+          const { error: insertErr } = await supabase
+            .from('userDatasets')
+            .insert({ username, ...dataset, createdAt: new Date().toLocaleString(), updatedAt: new Date().toLocaleString() });
+          if (insertErr) throw insertErr;
+        }
+      } catch (err) {
+        console.error('Supabase saveUserDataset failed:', err);
+      }
+    }
+
     const dbData = getLocalDb();
     if (!dbData.userDatasets) dbData.userDatasets = [];
-    // Replace if same name exists, otherwise push
     const idx = dbData.userDatasets.findIndex(
       d => d.username.toLowerCase() === username.toLowerCase() && d.name === dataset.name
     );
@@ -907,7 +1094,20 @@ const localDbAPI = {
     saveLocalDb(dbData);
   },
 
-  deleteUserDataset: (username, name) => {
+  deleteUserDataset: async (username, name) => {
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('userDatasets')
+          .delete()
+          .eq('username', username)
+          .eq('name', name);
+        if (error) throw error;
+      } catch (err) {
+        console.error('Supabase deleteUserDataset failed:', err);
+      }
+    }
+
     const dbData = getLocalDb();
     if (!dbData.userDatasets) return;
     dbData.userDatasets = dbData.userDatasets.filter(
@@ -1094,7 +1294,7 @@ export default function App() {
 
   // Fetch all users list for database stats
   const fetchUserDirectory = async () => {
-    const local = localDbAPI.getUsers();
+    const local = await localDbAPI.getUsers();
     if (window.useLocalDbFallback) {
       setUserDirectory(local);
       return;
@@ -1141,7 +1341,7 @@ export default function App() {
         console.warn(err);
       }
     }
-    localDbAPI.updateUser(username, { tier });
+    await localDbAPI.updateUser(username, { tier });
     fetchUserDirectory();
   };
 
@@ -1161,7 +1361,7 @@ export default function App() {
         console.warn(err);
       }
     }
-    localDbAPI.updateUser(username, { billingCycle });
+    await localDbAPI.updateUser(username, { billingCycle });
     fetchUserDirectory();
   };
 
@@ -1183,7 +1383,7 @@ export default function App() {
         console.warn(err);
       }
     }
-    localDbAPI.updateUser(username, { problemsCount: val });
+    await localDbAPI.updateUser(username, { problemsCount: val });
     fetchUserDirectory();
   };
 
@@ -1208,7 +1408,7 @@ export default function App() {
         console.warn(err);
       }
     }
-    localDbAPI.deleteUser(username);
+    await localDbAPI.deleteUser(username);
     fetchUserDirectory();
   };
 
@@ -1222,7 +1422,7 @@ export default function App() {
   const fetchSandboxHistory = async (user) => {
     if (!user) return;
     if (window.useLocalDbFallback) {
-      setSandboxHistory(localDbAPI.getSandboxHistory(user));
+      setSandboxHistory(await localDbAPI.getSandboxHistory(user));
       return;
     }
     try {
@@ -1236,11 +1436,11 @@ export default function App() {
         }
       } else {
         window.useLocalDbFallback = true;
-        setSandboxHistory(localDbAPI.getSandboxHistory(user));
+        setSandboxHistory(await localDbAPI.getSandboxHistory(user));
       }
     } catch (e) {
       window.useLocalDbFallback = true;
-      setSandboxHistory(localDbAPI.getSandboxHistory(user));
+      setSandboxHistory(await localDbAPI.getSandboxHistory(user));
     }
   };
 
@@ -1248,7 +1448,7 @@ export default function App() {
   const fetchChats = async (user, agentId) => {
     if (!user || !agentId) return;
     if (window.useLocalDbFallback) {
-      const data = localDbAPI.getChats(user, agentId);
+      const data = await localDbAPI.getChats(user, agentId);
       setChats(prev => ({
         ...prev,
         [agentId]: data.length > 0 ? data : getFallbackChats(agentId)
@@ -1269,7 +1469,7 @@ export default function App() {
         }
       } else {
         window.useLocalDbFallback = true;
-        const data = localDbAPI.getChats(user, agentId);
+        const data = await localDbAPI.getChats(user, agentId);
         setChats(prev => ({
           ...prev,
           [agentId]: data.length > 0 ? data : getFallbackChats(agentId)
@@ -1277,7 +1477,7 @@ export default function App() {
       }
     } catch (e) {
       window.useLocalDbFallback = true;
-      const data = localDbAPI.getChats(user, agentId);
+      const data = await localDbAPI.getChats(user, agentId);
       setChats(prev => ({
         ...prev,
         [agentId]: data.length > 0 ? data : getFallbackChats(agentId)
@@ -1323,7 +1523,10 @@ export default function App() {
     if (currentUser) {
       fetchSandboxHistory(currentUser);
       fetchUserDirectory();
-      setUserDatasets(localDbAPI.getUserDatasets(currentUser));
+      const loadDatasets = async () => {
+        setUserDatasets(await localDbAPI.getUserDatasets(currentUser));
+      };
+      loadDatasets();
       setActiveTab('workspace');
     }
   }, [currentUser]);
@@ -1393,20 +1596,20 @@ export default function App() {
     e.target.value = '';
   }, []);
 
-  const handleSaveDataset = () => {
+  const handleSaveDataset = async () => {
     if (!editorDataset.name.trim()) { alert('Please give this dataset a name.'); return; }
     const ds = { ...editorDataset, name: editorDataset.name.trim() };
-    localDbAPI.saveUserDataset(currentUser, ds);
-    const updated = localDbAPI.getUserDatasets(currentUser);
+    await localDbAPI.saveUserDataset(currentUser, ds);
+    const updated = await localDbAPI.getUserDatasets(currentUser);
     setUserDatasets(updated);
     setActiveDatasetName(ds.name);
     setAnalystView('list');
   };
 
-  const handleDeleteDataset = (name) => {
+  const handleDeleteDataset = async (name) => {
     if (!window.confirm(`Delete dataset "${name}"?`)) return;
-    localDbAPI.deleteUserDataset(currentUser, name);
-    setUserDatasets(localDbAPI.getUserDatasets(currentUser));
+    await localDbAPI.deleteUserDataset(currentUser, name);
+    setUserDatasets(await localDbAPI.getUserDatasets(currentUser));
     if (activeDatasetName === name) setActiveDatasetName(null);
     if (analystView === 'analysis') setAnalystView('list');
   };
@@ -1723,7 +1926,7 @@ Respond ONLY with a valid JSON object in this exact schema:
 
     // Save user chat message to database
     if (window.useLocalDbFallback) {
-      localDbAPI.saveChat(currentUser, agentKey, 'user', promptText, time);
+      await localDbAPI.saveChat(currentUser, agentKey, 'user', promptText, time);
     } else {
       fetch('/api/chats', {
         method: 'POST',
@@ -1735,9 +1938,9 @@ Respond ONLY with a valid JSON object in this exact schema:
           text: promptText,
           timestamp: time
         })
-      }).catch(err => {
+      }).catch(async err => {
         console.warn('POST chats failed, saving locally', err);
-        localDbAPI.saveChat(currentUser, agentKey, 'user', promptText, time);
+        await localDbAPI.saveChat(currentUser, agentKey, 'user', promptText, time);
       });
     }
 
@@ -1786,7 +1989,7 @@ Respond ONLY with a valid JSON object in this exact schema:
 
       // Save agent reply to database
       if (window.useLocalDbFallback) {
-        localDbAPI.saveChat(currentUser, agentKey, 'agent', replyText, agentTime, monologue);
+        await localDbAPI.saveChat(currentUser, agentKey, 'agent', replyText, agentTime, monologue);
       } else {
         fetch('/api/chats', {
           method: 'POST',
@@ -1799,9 +2002,9 @@ Respond ONLY with a valid JSON object in this exact schema:
             timestamp: agentTime,
             monologue: monologue
           })
-        }).catch(err => {
+        }).catch(async err => {
           console.warn('POST chats failed, saving locally', err);
-          localDbAPI.saveChat(currentUser, agentKey, 'agent', replyText, agentTime, monologue);
+          await localDbAPI.saveChat(currentUser, agentKey, 'agent', replyText, agentTime, monologue);
         });
       }
 
@@ -1825,7 +2028,7 @@ Respond ONLY with a valid JSON object in this exact schema:
 
       // Save agent error message to database
       if (window.useLocalDbFallback) {
-        localDbAPI.saveChat(currentUser, agentKey, 'agent', `Error connecting to API provider: ${err.message}`, errorTime, 'Connection Exception triggered.');
+        await localDbAPI.saveChat(currentUser, agentKey, 'agent', `Error connecting to API provider: ${err.message}`, errorTime, 'Connection Exception triggered.');
       } else {
         fetch('/api/chats', {
           method: 'POST',
@@ -1838,9 +2041,9 @@ Respond ONLY with a valid JSON object in this exact schema:
             timestamp: errorTime,
             monologue: 'Connection Exception triggered.'
           })
-        }).catch(err => {
+        }).catch(async err => {
           console.warn('POST chats failed, saving locally', err);
-          localDbAPI.saveChat(currentUser, agentKey, 'agent', `Error connecting to API provider: ${err.message}`, errorTime, 'Connection Exception triggered.');
+          await localDbAPI.saveChat(currentUser, agentKey, 'agent', `Error connecting to API provider: ${err.message}`, errorTime, 'Connection Exception triggered.');
         });
       }
     }
@@ -1851,7 +2054,7 @@ Respond ONLY with a valid JSON object in this exact schema:
 
     // Save prompt generation log to database history
     if (window.useLocalDbFallback) {
-      localDbAPI.saveSandboxPrompt(currentUser, sandboxPrompt, new Date().toLocaleString());
+      await localDbAPI.saveSandboxPrompt(currentUser, sandboxPrompt, new Date().toLocaleString());
       fetchSandboxHistory(currentUser);
     } else {
       fetch('/api/sandbox', {
@@ -1862,9 +2065,9 @@ Respond ONLY with a valid JSON object in this exact schema:
           prompt: sandboxPrompt
         })
       }).then(() => fetchSandboxHistory(currentUser))
-        .catch(err => {
+        .catch(async err => {
           console.warn('POST sandbox prompt failed, saving locally', err);
-          localDbAPI.saveSandboxPrompt(currentUser, sandboxPrompt, new Date().toLocaleString());
+          await localDbAPI.saveSandboxPrompt(currentUser, sandboxPrompt, new Date().toLocaleString());
           fetchSandboxHistory(currentUser);
         });
     }
@@ -3121,7 +3324,7 @@ Output a valid JSON object matching this schema. Return ONLY JSON:
                 }
 
                 // 2. Client-side local DB fallback
-                const res = localDbAPI.login(usernameInput, passwordInput);
+                const res = await localDbAPI.login(usernameInput, passwordInput);
                 if (res.success) {
                   localStorage.setItem('aos_logged_in_user', res.username);
                   setCurrentUser(res.username);

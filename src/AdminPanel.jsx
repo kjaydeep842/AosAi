@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { supabase } from './supabaseClient';
 import './AdminPanel.css';
 
 const pricingDefault = {
@@ -16,7 +17,26 @@ const modelsDefault = [
 
 // LocalStorage Fallback Helper
 const localDb = {
-  getUsers: () => {
+  getUsers: async () => {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('*');
+        if (error) throw error;
+        return (data || []).map(u => ({
+          ...u,
+          tier: u.tier || 'sandbox',
+          billingCycle: u.billingCycle || 'monthly',
+          problemsCount: u.problemsCount || 0,
+          login_count: u.loginCount || u.login_count || 1,
+          last_login: u.lastLogin || u.last_login || new Date().toLocaleString()
+        })).sort((a, b) => new Date(b.last_login) - new Date(a.last_login));
+      } catch (err) {
+        console.error('Supabase getUsers failed:', err);
+      }
+    }
+
     try {
       const dbVal = localStorage.getItem('aos_local_db');
       let dbObj = dbVal ? JSON.parse(dbVal) : { users: [] };
@@ -44,7 +64,19 @@ const localDb = {
       }));
     } catch { return []; }
   },
-  updateUser: (username, fields) => {
+  updateUser: async (username, fields) => {
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('users')
+          .update(fields)
+          .eq('username', username);
+        if (error) throw error;
+      } catch (err) {
+        console.error('Supabase updateUser failed:', err);
+      }
+    }
+
     try {
       const dbVal = localStorage.getItem('aos_local_db');
       const dbObj = dbVal ? JSON.parse(dbVal) : { users: [] };
@@ -62,7 +94,18 @@ const localDb = {
       console.error(e);
     }
   },
-  deleteUser: (username) => {
+  deleteUser: async (username) => {
+    if (supabase) {
+      try {
+        await supabase.from('users').delete().eq('username', username);
+        await supabase.from('chats').delete().eq('username', username);
+        await supabase.from('sandboxHistory').delete().eq('username', username);
+        await supabase.from('userDatasets').delete().eq('username', username);
+      } catch (err) {
+        console.error('Supabase deleteUser failed:', err);
+      }
+    }
+
     try {
       const dbVal = localStorage.getItem('aos_local_db');
       const dbObj = dbVal ? JSON.parse(dbVal) : { users: [] };
@@ -210,7 +253,7 @@ export default function AdminPanel() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const loadData = async () => {
-    const local = localDb.getUsers();
+    const local = await localDb.getUsers();
     try {
       const resUsers = await fetch('/api/users');
       if (resUsers.ok) {
@@ -284,7 +327,7 @@ export default function AdminPanel() {
   const filtered = users.filter(u => u.username.toLowerCase().includes(search.toLowerCase()));
 
   const updateUser = async (username, fields) => {
-    localDb.updateUser(username, fields);
+    await localDb.updateUser(username, fields);
     try {
       await fetch('/api/users/update', {
         method: 'POST',
@@ -299,7 +342,7 @@ export default function AdminPanel() {
 
   const deleteUser = async (username) => {
     if (!confirm(`Delete "${username}"?`)) return;
-    localDb.deleteUser(username);
+    await localDb.deleteUser(username);
     try {
       await fetch(`/api/users/${username}`, { method: 'DELETE' });
     } catch (e) {
