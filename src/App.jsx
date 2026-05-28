@@ -1078,8 +1078,9 @@ export default function App() {
 
   // Fetch all users list for database stats
   const fetchUserDirectory = async () => {
+    const local = localDbAPI.getUsers();
     if (window.useLocalDbFallback) {
-      setUserDirectory(localDbAPI.getUsers());
+      setUserDirectory(local);
       return;
     }
     try {
@@ -1089,16 +1090,22 @@ export default function App() {
       if (contentType && contentType.includes('application/json')) {
         const data = await res.json();
         if (Array.isArray(data)) {
-          setUserDirectory(data);
+          const map = new Map();
+          local.forEach(u => map.set(u.username.toLowerCase(), u));
+          data.forEach(u => map.set(u.username.toLowerCase(), u));
+          const merged = Array.from(map.values()).sort((a, b) => new Date(b.last_login || b.lastLogin) - new Date(a.last_login || a.lastLogin));
+          setUserDirectory(merged);
+        } else {
+          setUserDirectory(local);
         }
       } else {
         window.useLocalDbFallback = true;
-        setUserDirectory(localDbAPI.getUsers());
+        setUserDirectory(local);
       }
     } catch (e) {
       console.warn('API error, falling back to client-side localStorage db', e);
       window.useLocalDbFallback = true;
-      setUserDirectory(localDbAPI.getUsers());
+      setUserDirectory(local);
     }
   };
 

@@ -197,16 +197,25 @@ export default function AdminPanel() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const loadData = async () => {
+    const local = localDb.getUsers();
     try {
       const resUsers = await fetch('/api/users');
       if (resUsers.ok) {
         const usersData = await resUsers.json();
-        setUsers(usersData);
+        if (Array.isArray(usersData)) {
+          const map = new Map();
+          local.forEach(u => map.set(u.username.toLowerCase(), u));
+          usersData.forEach(u => map.set(u.username.toLowerCase(), u));
+          const merged = Array.from(map.values()).sort((a, b) => new Date(b.last_login || b.lastLogin) - new Date(a.last_login || a.lastLogin));
+          setUsers(merged);
+        } else {
+          setUsers(local);
+        }
       } else {
-        setUsers(localDb.getUsers());
+        setUsers(local);
       }
     } catch (err) {
-      setUsers(localDb.getUsers());
+      setUsers(local);
     }
 
     try {
