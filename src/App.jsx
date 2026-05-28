@@ -763,10 +763,26 @@ resetBtn.addEventListener('click', () => {
 
 // --- Client-side Database Emulation for Vercel / Static deployments ---
 const getLocalDb = () => {
-  const defaultData = { users: [], chats: [], sandboxHistory: [] };
+  const defaultData = {
+    users: [
+      { username: 'jaydeep', password: 'password123', loginCount: 2, lastLogin: '25/5/2026, 4:24:09 pm', tier: 'sandbox', billingCycle: 'monthly', problemsCount: 9, registeredAt: '25/5/2026, 4:24:09 pm' },
+      { username: 'shreyash', password: 'password123', loginCount: 1, lastLogin: '25/5/2026, 4:17:46 pm', tier: 'sandbox', billingCycle: 'monthly', problemsCount: 9, registeredAt: '25/5/2026, 4:17:46 pm' },
+      { username: 'admin', password: 'admin123', loginCount: 3, lastLogin: '27/5/2026, 5:41:48 pm', tier: 'sandbox', billingCycle: 'monthly', problemsCount: 9, registeredAt: '27/5/2026, 5:41:48 pm' },
+      { username: 'vivek', password: 'password123', loginCount: 1, lastLogin: new Date().toLocaleString(), tier: 'sandbox', billingCycle: 'monthly', problemsCount: 7, registeredAt: new Date().toLocaleString() }
+    ],
+    chats: [],
+    sandboxHistory: []
+  };
   try {
     const raw = localStorage.getItem('aos_local_db');
-    return raw ? JSON.parse(raw) : defaultData;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.users) && parsed.users.length > 0) {
+        return parsed;
+      }
+    }
+    localStorage.setItem('aos_local_db', JSON.stringify(defaultData));
+    return defaultData;
   } catch (e) {
     return defaultData;
   }

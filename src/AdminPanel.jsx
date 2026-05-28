@@ -19,7 +19,20 @@ const localDb = {
   getUsers: () => {
     try {
       const dbVal = localStorage.getItem('aos_local_db');
-      const dbObj = dbVal ? JSON.parse(dbVal) : { users: [] };
+      let dbObj = dbVal ? JSON.parse(dbVal) : { users: [] };
+      if (!dbObj || !Array.isArray(dbObj.users) || dbObj.users.length === 0) {
+        dbObj = {
+          users: [
+            { username: 'jaydeep', password: 'password123', loginCount: 2, lastLogin: '25/5/2026, 4:24:09 pm', tier: 'sandbox', billingCycle: 'monthly', problemsCount: 9, registeredAt: '25/5/2026, 4:24:09 pm' },
+            { username: 'shreyash', password: 'password123', loginCount: 1, lastLogin: '25/5/2026, 4:17:46 pm', tier: 'sandbox', billingCycle: 'monthly', problemsCount: 9, registeredAt: '25/5/2026, 4:17:46 pm' },
+            { username: 'admin', password: 'admin123', loginCount: 3, lastLogin: '27/5/2026, 5:41:48 pm', tier: 'sandbox', billingCycle: 'monthly', problemsCount: 9, registeredAt: '27/5/2026, 5:41:48 pm' },
+            { username: 'vivek', password: 'password123', loginCount: 1, lastLogin: new Date().toLocaleString(), tier: 'sandbox', billingCycle: 'monthly', problemsCount: 7, registeredAt: new Date().toLocaleString() }
+          ],
+          chats: [],
+          sandboxHistory: []
+        };
+        localStorage.setItem('aos_local_db', JSON.stringify(dbObj));
+      }
       const rawUsers = dbObj.users || [];
       return rawUsers.map(u => ({
         ...u,
